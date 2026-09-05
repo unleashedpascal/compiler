@@ -3654,7 +3654,7 @@ execinfo_x_stackcommit=09134_X_Stack space committed: $1 bytes
 #
 # Internal linker messages
 #
-# 09224 is the last used one
+# 09228 is the last used one
 #
 # BeginOfTeX
 % \section{Linker messages}
@@ -3723,6 +3723,14 @@ link_w_unsupported_cross_endian_internal_linker=09223_W_Internal linker in cross
 % The internal linker does not correctly handle endianess conversion.
 link_f_executable_too_big_exceeds_X_by_Y_bytes=09224_F_Executable image size is too big for $1 target (exceeds $2 by $3 bytes).
 % The result File is too big
+link_e_staticlib_not_supported=09225_E_Static library output (-XA) is not supported for this target
+% Only targets with an external GNU linker can produce a standalone static library.
+link_e_staticlib_util_not_found=09226_E_Static library output needs $1, install GNU binutils for the target
+% The static library is put together with \var{ld} and \var{objcopy}.
+link_e_staticlib_no_exports=09227_E_A static library needs an exports clause, nothing would stay reachable
+% Everything that is not reachable from an export is dropped from the library.
+link_w_staticlib_shared_dependency=09228_W_The static library depends on shared library "$1", link it into the host program
+% The library uses a shared library that cannot be put into the archive.
 % \end{description}
 # EndOfTeX
 

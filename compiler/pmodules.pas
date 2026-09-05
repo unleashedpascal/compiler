@@ -2637,7 +2637,9 @@ type
             { add all directly used packages as libraries }
             add_package_libs(linker);
             { finally we can create an executable }
-            if curr.islibrary then
+            if cs_link_staticlib in current_settings.globalswitches then
+              linker.MakeArchive
+            else if curr.islibrary then
               linker.MakeSharedLibrary
             else
               linker.MakeExecutable;

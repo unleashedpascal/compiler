@@ -74,6 +74,8 @@ interface
          Function  MakeExecutable:boolean;virtual;
          Function  MakeSharedLibrary:boolean;virtual;
          Function  MakeStaticLibrary:boolean;virtual;
+         { `-XA`: standalone static library of the whole program }
+         Function  MakeArchive:boolean;virtual;
          procedure ExpandAndApplyOrder(var Src:TCmdStrList);
          procedure LoadPredefinedLibraryOrder;virtual;
          function  ReOrderEntries : boolean;
@@ -93,6 +95,16 @@ interface
          Function  DoExec(const command:TCmdStr; para:TCmdStr;showinfo,useshell:boolean):boolean;
          procedure SetDefaultInfo;virtual;
          Function  MakeStaticLibrary:boolean;override;
+         Function  MakeArchive:boolean;override;
+         { MakeArchive hooks: `ld -r` options for the target, the section
+           merge script for the second pass ('' = no second pass), and the
+           fixup of the first relocatable object (extraobjects receives an
+           object to add to the second pass) }
+         function  RelocatableLinkOptions: TCmdStr;virtual;
+         function  RelocatableMergeScript: ansistring;virtual;
+         function  PostProcessRelocatable(const fn: TCmdStr; var extraobjects: TCmdStr): boolean;virtual;
+         { fixup of the merged object, before the symbols are hidden }
+         function  PostProcessMerged(const fn: TCmdStr): boolean;virtual;
 
          Function UniqueName(const str:TCmdStr): TCmdStr;
 
@@ -177,7 +189,7 @@ Implementation
 {$endif hasUnix}
       cscript,globals,verbose,comphook,ppu,fpchash,triplet,tripletcpu,
       aasmbase,aasmcpu,
-      ogmap;
+      ogmap,owar;
 
     var
       CLinker : array[tlink] of TLinkerClass;
@@ -617,6 +629,13 @@ Implementation
       begin
         MakeStaticLibrary:=false;
         Message(exec_e_static_lib_not_supported);
+      end;
+
+
+    Function TLinker.MakeArchive:boolean;
+      begin
+        MakeArchive:=false;
+        Message(link_e_staticlib_not_supported);
       end;
 
 
@@ -1116,6 +1135,292 @@ Implementation
             AsmRes.AddDeleteDirCommand(smartpath);
           end;
         MakeStaticLibrary:=success;
+      end;
+
+
+    function TExternalLinker.RelocatableLinkOptions: TCmdStr;
+      begin
+        result:='';
+      end;
+
+
+    function TExternalLinker.RelocatableMergeScript: ansistring;
+      begin
+        result:='';
+      end;
+
+
+    function TExternalLinker.PostProcessRelocatable(const fn: TCmdStr; var extraobjects: TCmdStr): boolean;
+      begin
+        result:=true;
+      end;
+
+
+    function TExternalLinker.PostProcessMerged(const fn: TCmdStr): boolean;
+      begin
+        result:=true;
+      end;
+
+
+    { `-XA`: link every object relocatably with the exports as gc roots, let
+      the target patch the result, merge the sections when the target asks
+      for it, hide every symbol but the exports and archive the one object
+      that is left. Needs GNU binutils (ld, objcopy) for the target. }
+    Function TExternalLinker.MakeArchive:boolean;
+
+        function tempname(const suffix: TCmdStr): TCmdStr;
+          begin
+            result:=current_module.outputpath+UniqueName('staticlib')+suffix;
+          end;
+
+        { paths: ld reads a backslash in a response file as an escape }
+        procedure writelines(const fn: TCmdStr; list: TCmdStrList; paths: boolean);
+          var
+            t : text;
+            item : TCmdStrListItem;
+            s : TCmdStr;
+          begin
+            assign(t,fn);
+            rewrite(t);
+            item:=TCmdStrListItem(list.first);
+            while assigned(item) do
+              begin
+                s:=item.str;
+                if paths then
+                  begin
+                    Replace(s,'\','/');
+                    s:=maybequoted(s);
+                  end;
+                writeln(t,s);
+                item:=TCmdStrListItem(item.next);
+              end;
+            close(t);
+          end;
+
+        procedure cleanup(const fn: TCmdStr);
+          begin
+            if (fn<>'') and not(cs_asm_leave in current_settings.globalswitches) then
+              DeleteFile(fn);
+          end;
+
+        { a directory holding an fpc executable is the binutils bundled with
+          the compiler, which are too old for a relocatable link with gc:
+          when the usual lookup (-FD, then the compiler's directory, then
+          PATH) ends up there, a tool on PATH outside such a bundle wins }
+        function findtool(const name: TCmdStr): TCmdStr;
+
+          function bundled(const dir: TCmdStr): boolean;
+            begin
+              result:=FileExists(FixPath(dir,false)+'fpc'+source_info.exeext,false);
+            end;
+
+          var
+            dirs,dir,found : TCmdStr;
+            i : longint;
+          begin
+            result:=FindUtil(name,false);
+            if (result='') or (cs_link_on_target in current_settings.globalswitches) or
+               not bundled(ExtractFilePath(result)) then
+              exit;
+            dirs:=GetEnvironmentVariable('PATH');
+            while dirs<>'' do
+              begin
+                i:=pos(PathSeparator,dirs);
+                if i=0 then
+                  i:=length(dirs)+1;
+                dir:=copy(dirs,1,i-1);
+                delete(dirs,1,i);
+                if (dir<>'') and not bundled(dir) and
+                   FindFile(ChangeFileExt(name,source_info.exeext),dir,false,found) then
+                  begin
+                    result:=found;
+                    exit;
+                  end;
+              end;
+          end;
+
+      var
+        ldbin,objcopybin,
+        cmdstr,extraobjs,roots,
+        listfn,keepfn,renamefn,scriptfn,
+        reloc1fn,reloc2fn,objfn,s : TCmdStr;
+        script : ansistring;
+        inputs : TCmdStrList;
+        item : TCmdStrListItem;
+        t : text;
+        f : TCCustomFileStream;
+        buf : pointer;
+        size : longint;
+        ar : tarobjectwriter;
+      begin
+        result:=false;
+        { the pipeline patches objects in place, nothing to script }
+        if cs_link_nolink in current_settings.globalswitches then
+          exit;
+        if current_module.staticlibexports.empty then
+          begin
+            Message(link_e_staticlib_no_exports);
+            exit;
+          end;
+        Message1(exec_i_linking,current_module.archivefilename);
+        ldbin:=findtool(utilsprefix+'ld');
+        objcopybin:=findtool(utilsprefix+'objcopy');
+        if ldbin='' then
+          Message1(link_e_staticlib_util_not_found,utilsprefix+'ld');
+        if objcopybin='' then
+          Message1(link_e_staticlib_util_not_found,utilsprefix+'objcopy');
+        if (ldbin='') or (objcopybin='') then
+          exit;
+        item:=TCmdStrListItem(SharedLibFiles.first);
+        while assigned(item) do
+          begin
+            Message1(link_w_staticlib_shared_dependency,item.str);
+            item:=TCmdStrListItem(item.next);
+          end;
+
+        { pass 1: every object and unit archive, import libraries excluded
+          since the host program resolves the imports through the import
+          object written by PostProcessRelocatable }
+        inputs:=TCmdStrList.Create;
+        item:=TCmdStrListItem(ObjectFiles.first);
+        while assigned(item) do
+          begin
+            inputs.concat(item.str);
+            item:=TCmdStrListItem(item.next);
+          end;
+        item:=TCmdStrListItem(StaticLibFiles.first);
+        while assigned(item) do
+          begin
+            s:=ExtractFileName(item.str);
+            if (target_info.importlibprefix='') or
+               (copy(s,1,length(target_info.importlibprefix))<>target_info.importlibprefix) then
+              inputs.concat(item.str);
+            item:=TCmdStrListItem(item.next);
+          end;
+        listfn:=tempname('.lst');
+        writelines(listfn,inputs,true);
+        inputs.free;
+        roots:='';
+        item:=TCmdStrListItem(current_module.staticlibexports.first);
+        while assigned(item) do
+          begin
+            roots:=roots+' -u '+maybequoted(item.str);
+            item:=TCmdStrListItem(item.next);
+          end;
+        reloc1fn:=tempname('1'+target_info.objext);
+        reloc2fn:='';
+        scriptfn:='';
+        renamefn:='';
+        extraobjs:='';
+        { the exports are listed for objcopy twice: an unreferenced global
+          counts as unneeded on i386 without the explicit keep }
+        keepfn:=tempname('.keep');
+        writelines(keepfn,current_module.staticlibexports,false);
+        cmdstr:=RelocatableLinkOptions+' -r -S --gc-sections'+roots+' -o '+maybequoted(reloc1fn)+' @'+maybequoted(listfn);
+        result:=DoExec(ldbin,cmdstr,false,false) and
+                PostProcessRelocatable(reloc1fn,extraobjs);
+        { the symbols of the dropped sections stay behind and every later
+          reader warns about them; hiding everything but the exports here
+          lets the second pass throw the locals away, so an exported
+          variable gets its export name now, before its mangled name is
+          hidden and gone }
+        if result then
+          begin
+            cmdstr:='--keep-global-symbols='+maybequoted(keepfn)+' --keep-symbols='+maybequoted(keepfn)+' --strip-unneeded';
+            if not current_module.staticlibrenames.empty then
+              begin
+                renamefn:=tempname('.ren');
+                assign(t,renamefn);
+                rewrite(t);
+                item:=TCmdStrListItem(current_module.staticlibrenames.first);
+                while assigned(item) do
+                  begin
+                    s:=item.str;
+                    writeln(t,copy(s,1,pos('=',s)-1),' ',copy(s,pos('=',s)+1,length(s)));
+                    item:=TCmdStrListItem(item.next);
+                  end;
+                close(t);
+                cmdstr:=cmdstr+' --redefine-syms='+maybequoted(renamefn);
+              end;
+            cmdstr:=cmdstr+' '+maybequoted(reloc1fn);
+            result:=DoExec(objcopybin,cmdstr,false,false);
+          end;
+
+        { pass 2: merge the sections, add the target's extra objects and
+          drop the local symbols (-x rewrites their relocations against the
+          sections), which is most of the size of the archive otherwise }
+        objfn:=reloc1fn;
+        if result then
+          begin
+            reloc2fn:=tempname('2'+target_info.objext);
+            cmdstr:=RelocatableLinkOptions+' -r -x';
+            script:=RelocatableMergeScript;
+            if script<>'' then
+              begin
+                scriptfn:=tempname('.ld');
+                assign(t,scriptfn);
+                rewrite(t);
+                write(t,script);
+                close(t);
+                cmdstr:=cmdstr+' -T '+maybequoted(scriptfn);
+              end;
+            cmdstr:=cmdstr+' -o '+maybequoted(reloc2fn)+' '+maybequoted(reloc1fn);
+            if extraobjs<>'' then
+              cmdstr:=cmdstr+' '+maybequoted(extraobjs);
+            result:=DoExec(ldbin,cmdstr,false,false) and
+                    PostProcessMerged(reloc2fn);
+            objfn:=reloc2fn;
+          end;
+
+        { only the exports stay global (the extra objects brought globals of
+          their own) }
+        if result then
+          begin
+            cmdstr:='--keep-global-symbols='+maybequoted(keepfn)+' --keep-symbols='+maybequoted(keepfn)+' --strip-unneeded';
+            cmdstr:=cmdstr+' '+maybequoted(objfn);
+            result:=DoExec(objcopybin,cmdstr,false,false);
+          end;
+
+        { the archive: one member, indexed by the exports }
+        if result then
+          begin
+            f:=CFileStreamClass.Create(objfn,fmOpenRead);
+            result:=CStreamError=0;
+            if result then
+              begin
+                size:=f.Size;
+                getmem(buf,size);
+                f.Read(buf^,size);
+                f.Free;
+                f:=nil;
+                DeleteFile(current_module.archivefilename);
+                ar:=tarobjectwriter.createAr(current_module.archivefilename);
+                ar.createfile(lower(current_module.modulename^)+target_info.objext);
+                item:=TCmdStrListItem(current_module.staticlibexports.first);
+                while assigned(item) do
+                  begin
+                    ar.writesym(item.str);
+                    item:=TCmdStrListItem(item.next);
+                  end;
+                ar.write(buf^,size);
+                ar.closefile;
+                ar.free;
+                freemem(buf);
+              end
+            else
+              begin
+                f.Free;
+                Message1(exec_e_cant_create_archivefile,current_module.archivefilename);
+              end;
+          end;
+
+        cleanup(listfn);
+        cleanup(reloc1fn);
+        cleanup(reloc2fn);
+        cleanup(scriptfn);
+        cleanup(keepfn);
+        cleanup(renamefn);
+        cleanup(extraobjs);
       end;
 
     var
@@ -2246,7 +2551,9 @@ Implementation
 
     procedure InitLinker;
       begin
-        if (cs_link_extern in current_settings.globalswitches) and
+        { a static library is always put together by the external tools }
+        if ((cs_link_extern in current_settings.globalswitches) or
+            (cs_link_staticlib in current_settings.globalswitches)) and
            assigned(CLinker[target_info.linkextern]) then
           begin
             linker:=CLinker[target_info.linkextern].Create;

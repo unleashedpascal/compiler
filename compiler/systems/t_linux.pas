@@ -27,6 +27,7 @@ unit t_linux;
 interface
 
   uses
+    globtype,
     aasmdata,
     symsym,
     import,export,expunix,link;
@@ -57,6 +58,7 @@ interface
       function  MakeExecutable:boolean;override;
       function  MakeSharedLibrary:boolean;override;
       procedure LoadPredefinedLibraryOrder; override;
+      function  RelocatableLinkOptions: TCmdStr;override;
     end;
 
     TInternalLinkerLinux=class(TInternalLinker)
@@ -77,7 +79,7 @@ implementation
   uses
     SysUtils,
     cutils,cfileutl,cclasses,
-    verbose,systems,globtype,globals,
+    verbose,systems,globals,
     cscript,
     fmodule,
     aasmbase,aasmtai,aasmcpu,cpubase,
@@ -402,6 +404,21 @@ begin
   Inherited Create;
   SetupLibrarySearchPath;
 end;
+
+function TLinkerLinux.RelocatableLinkOptions: TCmdStr;
+begin
+{$ifdef i386}
+  result:='-m elf_i386';
+{$else}
+{$ifdef x86_64}
+  result:='-m elf_x86_64';
+{$else}
+  { the other targets rely on a cross ld defaulting to them }
+  result:='';
+{$endif}
+{$endif}
+end;
+
 
 procedure TLinkerLinux.SetDefaultInfo;
 {
