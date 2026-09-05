@@ -1813,6 +1813,81 @@ end;
 
 
 {*****************************************************************************
+                    Runtime start and shutdown without startup code
+*****************************************************************************}
+
+var
+  { rtlInit/rtlDone nesting, the runtime is up while it is above zero }
+  StaticLibInitCount : longint = 0;
+
+{$ifdef FPC_HAS_FEATURE_THREADING}
+threadvar
+{$else FPC_HAS_FEATURE_THREADING}
+var
+{$endif FPC_HAS_FEATURE_THREADING}
+  { set once the calling thread has its runtime state }
+  StaticLibThreadReady : boolean;
+
+{ true for the rtlInit that has to do the work }
+function StaticLibBeginInit: boolean;
+begin
+  result:=InterlockedIncrement(StaticLibInitCount)=1;
+end;
+
+{ true for the rtlDone that has to do the work }
+function StaticLibEndDone: boolean;
+begin
+  result:=(StaticLibInitCount>0) and (InterlockedDecrement(StaticLibInitCount)=0);
+end;
+
+{$ifdef FPC_SYSTEM_HAS_STATICLIB}
+procedure StaticLibThreadInit; forward;
+{$else FPC_SYSTEM_HAS_STATICLIB}
+procedure StaticLibThreadInit;
+begin
+{$ifdef FPC_HAS_FEATURE_THREADING}
+  { the stack size of a thread the host created is unknown }
+  InitThread(1000000000);
+{$endif FPC_HAS_FEATURE_THREADING}
+  StaticLibThreadReady:=true;
+  if assigned(StaticLibThreadAttach) then
+    StaticLibThreadAttach();
+end;
+
+{ targets whose startup code does more than calling PascalMain provide
+  their own version, this one only runs the unit initializations }
+procedure rtlInit; cdecl; [public,alias:'FPC_RTLINIT'];
+begin
+  if not StaticLibBeginInit then
+    exit;
+{$ifdef FPC_HAS_FEATURE_DYNLIBS}
+  IsLibrary:=true;
+  ModuleIsLib:=true;
+{$endif FPC_HAS_FEATURE_DYNLIBS}
+  IsMultiThread:=true;
+  internal_initializeunits;
+  StaticLibThreadReady:=true;
+end;
+
+procedure rtlDone; cdecl; [public,alias:'FPC_RTLDONE'];
+begin
+  if not StaticLibEndDone then
+    exit;
+  InternalExit;
+  StaticLibThreadReady:=false;
+end;
+{$endif FPC_SYSTEM_HAS_STATICLIB}
+
+{ called by every export wrapper of a static library before the routine:
+  a thread the host program created has no runtime state yet }
+procedure fpc_staticlib_enter; compilerproc;
+begin
+  if (StaticLibInitCount>0) and not StaticLibThreadReady then
+    StaticLibThreadInit;
+end;
+
+
+{*****************************************************************************
                           Dynamic library support
 *****************************************************************************}
 

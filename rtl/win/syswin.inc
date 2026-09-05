@@ -845,3 +845,60 @@ begin
   finalize_arguments;
 end;
 
+
+{*****************************************************************************
+                    Runtime start and shutdown without startup code
+*****************************************************************************}
+
+{ the entry information of sysinit, which is not run }
+function SysInitEntryInfo: PEntryInformation; external name 'FPC_SysInitEntryInfo';
+
+procedure StaticLibThreadInit;
+begin
+  { the first threadvar access of a foreign thread, the flag read in
+    fpc_staticlib_enter, already allocated its block and ran InitThread }
+  StaticLibThreadReady:=true;
+  if assigned(StaticLibThreadAttach) then
+    StaticLibThreadAttach();
+end;
+
+{ what a DLL does on process attach, minus the startup code: the entry
+  information comes from sysinit, the heap and thread setup is repeated
+  explicitly because the system unit skips it once a thread manager is
+  installed, which is the case after an rtlDone. IsLibrary stays false:
+  the TLS callback of the host already set the threadvars up the
+  executable way (no node prefix, no list lock) before anything ran }
+procedure rtlInit; cdecl; [public,alias:'FPC_RTLINIT'];
+begin
+  if not StaticLibBeginInit then
+    exit;
+  SetupEntryInformation(SysInitEntryInfo^);
+  IsConsole:=true;
+  IsMultiThread:=true;
+{$ifndef LEGACYHEAP}
+  DeferInitHeapProcessWide;
+{$endif ndef LEGACYHEAP}
+  InitHeap;
+  InitSystemThreads;
+  internal_initializeunits;
+  StaticLibThreadReady:=true;
+end;
+
+{ what a DLL does on process detach }
+procedure rtlDone; cdecl; [public,alias:'FPC_RTLDONE'];
+begin
+  if not StaticLibEndDone then
+    exit;
+  { a threadvar, so before the threadvar block goes away }
+  StaticLibThreadReady:=false;
+  InternalExit;
+{$ifndef LEGACYHEAP}
+  DoneHeapProcessWide;
+{$endif ndef LEGACYHEAP}
+  { the block goes, the TLS slot stays: the next threadvar access (a halt
+    after rtlDone, the next rtlInit) rebuilds the thread state lazily
+    through SysRelocateThreadvar, with the slot gone it would be a
+    runtime error 226 with nothing left to report it }
+  SysReleaseThreadVars;
+end;
+
