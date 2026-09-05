@@ -1948,6 +1948,8 @@ implementation
             { possibly generic involved? }
             if df_generic in current_procinfo.procdef.defoptions then
               result:=internalstatements(newstatement)
+            else if is_open_array(destppn.resultdef) then
+              CGMessage(type_e_setlength_open_array_param)
             else
               CGMessage(type_e_mismatch);
             exit;

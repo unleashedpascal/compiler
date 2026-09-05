@@ -794,7 +794,10 @@ implementation
         { assignments to formaldefs and open arrays aren't allowed }
         if is_open_array(left.resultdef) or is_array_of_const(left.resultdef) then
           begin
-            CGMessage(type_e_assignment_not_allowed);
+            if is_open_array(left.resultdef) then
+              CGMessage(type_e_assign_open_array_param)
+            else
+              CGMessage(type_e_assignment_not_allowed);
             result:=cerrornode.create;
             exit;
           end

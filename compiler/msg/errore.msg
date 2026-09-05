@@ -2025,7 +2025,7 @@ parser_e_outvar_discard_untyped=03453_E_Cannot discard at an untyped parameter, 
 #
 # 03453 is the last used parser one
 #
-# 04141 is the last used one
+# 04143 is the last used one
 #
 % \section{Type checking errors}
 % This section lists all errors that can occur when type checking is
@@ -2515,6 +2515,14 @@ type_h_swapvalues_not_inplace=04141_H_SwapValues on "$1" is not an in-place swap
 % an address. A property read through a getter has none, so the swap goes
 % through a hidden temporary and every property operand costs one getter and
 % one setter call. The accessors run user code, so the exchange is not atomic.
+type_e_setlength_open_array_param=04142_E_Cannot resize an open array parameter, declare it as TArray<T> or a dynamic array type
+% An ar{array of T} parameter is an open array: it describes the caller's
+% array and cannot grow or shrink. To let the routine resize the array the
+% parameter needs a dynamic array type.
+type_e_assign_open_array_param=04143_E_Cannot assign to an open array parameter, declare it as TArray<T> or a dynamic array type to replace its contents
+% An ar{array of T} parameter is an open array that only views the caller's
+% array, so it cannot be replaced as a whole. Assign to its elements, or give
+% the parameter a dynamic array type.
 %
 % \end{description}
 #
