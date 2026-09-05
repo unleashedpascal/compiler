@@ -194,6 +194,10 @@ Smaller unlocks that stock modes reject, gathered on one page: **string-to-ordin
 
 `{$modeswitch striprtti}` (opt-in, per unit) empties the type-name strings in RTTI / VMT structures, so an ASCII dump of the binary no longer reveals internal type names. Three whitelisting mechanisms cover code you do and do not control: the `expose` keyword per declaration, `{$rttiexpose TForm*}` per unit, and `--rttiexpose=TForm*` globally on the command line. Anything that walks RTTI by string (`Application.CreateForm`, `MethodAddress()`, `GetPropInfo()`, `WriteStr()` on enums) needs its types whitelisted. Off by default in unleashed mode.
 
+### [Static Libraries](static-library.md)
+
+`-XA` (or `--staticlib`) builds a `library` or `program` into one standalone `.a` archive: the module, its units and the runtime, with exactly the `exports` visible and every other symbol hidden, so two such libraries link into the same program without a clash. Any toolchain that links static libraries can use it. The host starts and stops the runtime through `rtlInit` / `rtlDone` (reference counted, cycles allowed, meant to be exported under the library's own names); every export wrapper sets up threads the host created on their first call. `rtlInit` also serves programs with their own `{$entrypoint}`. Needs a current GNU binutils (`-FD`).
+
 ### [Custom Binary Metadata](binary-metadata.md)
 
 Three CLI flags that override metadata the compiler embeds into the binary: `--fpcsignature=` (the `.fpc.version` ident string on every target; an empty value drops the section entirely), plus `--linkerversion=` and `--osversion=` (PE optional header fields on Windows; the latter accepts names like `Win11` or numeric `Major.Minor`). Descriptive metadata only: generated code is unchanged. CLI-only, no directive form.
