@@ -108,6 +108,7 @@ A value containing whitespace must be quoted with `"..."`, otherwise the tokeniz
 | `%CHECKBIN_LACKS=L` | Same shape, opposite assertion: every entry MUST NOT appear. Useful for verifying RTTI stripping, dead-code elimination, etc. |
 | `%CPU=L` | Comma-separated list of target cpus (as reported by `fpc -iTP`, e.g. `x86_64,aarch64`) the test applies to. When the compiler targets a cpu not in the list, the test is reported as SKIP instead of being compiled. Use for tests that exercise 64-bit-only behavior such as `Int64` `for parallel` loop variables. |
 | `%EXPECTMSG=S` | The compiler output must contain `S`, checked for passing and `%FAIL` tests alike; quote the value when it has spaces: `%EXPECTMSG="Cannot resize an open array parameter"`. Use it to pin a `%FAIL` test to one specific error, or to assert a warning on a compiling test. |
+| `%PRELIB=lib.pas` | Build `lib.pas` next to the test into a static library (`-XA`) before the test, as `lib<name>.a` in the worker `.tmp/` dir; the test links it with `{$linklib name}`. A `library` source without flags is a helper, never a test. Failure is reported in phase `prelib`. Pass `--utilsdir` so the build uses a current binutils. |
 
 When either `%CHECKBIN_*` flag is set, the runner adds `-Xs -XX -CX` to the compile to keep dead code and debug-section noise out of the byte search. The check happens whether or not the test runs (so it composes with `%NORUN`). On violation the verdict is FAIL with phase `checkbin` and a note naming the offending substring.
 
@@ -148,6 +149,7 @@ Tests are grouped into per-feature folders under `testfiles/`. The runner descen
 | `--norun` | Force `%NORUN` semantics on every test. Compile-only run; useful when the run side is too slow or unavailable. |
 | `--timeout=N` | Default per-test timeout in seconds. `0` disables the timeout entirely. Default: `30`. Overridden per-test by `%TIMEOUT=N`. |
 | `--parallel=N` | Number of worker threads. Each worker uses its own `.tmp/W<i>/` subdir so artifacts never collide. Default: half the CPU core count. Use `--parallel=1` to force sequential. |
+| `--utilsdir=DIR` | Passed as `-FD` to `%PRELIB` builds only. A static library needs a newer `ld` and `objcopy` than the ones shipped with FPC (the bundled `ld` 2.28 ignores `--gc-sections` in a relocatable link); point this at a current GNU binutils, e.g. a MinGW-w64 `bin` directory. |
 | `--fail-fast` | Stop dispatching new tests at the first failure. In parallel mode, workers already mid-test finish normally; only the unscheduled tail is skipped. |
 
 ### Mode / modeswitch overrides
