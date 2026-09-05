@@ -144,6 +144,18 @@ grab(_);              // Error: Cannot discard at an untyped parameter, there is
 grab(var y: integer); // OK - the annotation supplies the type
 ```
 
+An **open array** parameter (`array of T`) only views an array the caller already has; it cannot grow. A bare `var y` bound to one becomes an empty dynamic array of the element type, `TArray<T>`, and the compiler warns that the callee cannot fill it. After the call `y` is a normal dynamic array (`length(y) = 0`). The discard `_` passes an empty array without a warning, since discarding is deliberate:
+
+```pascal
+procedure scan(out q: array of string);
+
+scan(var y);         // Warning: Out-variable bound to an open array parameter is empty, the callee cannot resize it; declare the parameter as TArray<T> or pass an existing array
+writeln(length(y));  // 0
+scan(_);             // OK, silent: the callee sees an empty array
+```
+
+To let the callee return a new array, declare the parameter as `TArray<T>` (or another dynamic array type); a `var y` bound to it then receives whatever the callee allocates.
+
 ## Type inference happens after overload resolution
 
 `var x` / `_` carry no type until a candidate is chosen, so they match an `out` or `var` parameter of *any* type. If overloads differ only in that parameter's type - or only in `out` vs `var` - the call is ambiguous:

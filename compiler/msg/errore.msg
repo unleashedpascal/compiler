@@ -498,7 +498,7 @@ scan_e_improperly_indented_multiline_string=02120_E_Incorrectly indented multi-l
 #
 # Parser
 #
-# 03453 is the last used one
+# 03454 is the last used one
 #
 % \section{Parser messages}
 % This section lists all parser messages. The parser takes care of the
@@ -2018,12 +2018,17 @@ parser_e_outvar_discard_untyped=03453_E_Cannot discard at an untyped parameter, 
 % The discard \var{_} passes a hidden temporary typed from the matched
 % parameter. An untyped parameter provides no type, so pass an existing
 % variable instead.
+parser_w_outvar_open_array=03454_W_Out-variable bound to an open array parameter is empty, the callee cannot resize it; declare the parameter as TArray<T> or pass an existing array
+% An open array parameter (\var{array of T}) only views an array the caller
+% already has, so a fresh \var{var x} there is an empty dynamic array of the
+% element type and stays empty after the call. Give the parameter a dynamic
+% array type when the callee is meant to fill it.
 %
 % \end{description}
 %
 # Type Checking
 #
-# 03453 is the last used parser one
+# 03454 is the last used parser one
 #
 # 04143 is the last used one
 #

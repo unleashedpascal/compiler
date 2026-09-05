@@ -4231,7 +4231,83 @@ implementation
         currpara : tparavarsym;
         hiddentree : tnode;
         paradef  : tdef;
-        outvarsym : tabstractnormalvarsym;
+      { binds an inline out-var / discard argument to the parameter it
+        matched: an annotated declaration keeps its explicit type, a bare one
+        takes the parameter's type; allocates storage if the variable lives at
+        unit/program level, re-typechecks its load node and clears the flag }
+      procedure bind_outvar(pt:tcallparanode;currpara:tparavarsym);
+        var
+          outvarsym : tabstractnormalvarsym;
+          outvararr : tarraydef;
+        begin
+          outvarsym:=tabstractnormalvarsym(tloadnode(pt.left).symtableentry);
+          if outvarsym.vardef.typ=errordef then
+            begin
+              { a bare declaration at an untyped parameter has no type to
+                infer; the discard's hidden temp is equally untypable }
+              if currpara.vardef.typ=formaldef then
+                begin
+                  if outvarsym.realname[1]='$' then
+                    CGMessagePos(pt.left.fileinfo,parser_e_outvar_discard_untyped)
+                  else
+                    CGMessagePos(pt.left.fileinfo,parser_e_outvar_untyped_param);
+                  pt.outvarseed.free;
+                  pt.outvarseed:=nil;
+                end
+              { an open array only views an array the caller has, so the
+                variable becomes an empty dynamic array of the element
+                type; a named one gets a warning, a discard is deliberate }
+              else if is_open_array(currpara.vardef) then
+                begin
+                  outvararr:=carraydef.create(0,-1,sizesinttype);
+                  outvararr.arrayoptions:=outvararr.arrayoptions+[ado_IsDynamicArray];
+                  outvararr.elementdef:=tarraydef(currpara.vardef).elementdef;
+                  outvarsym.vardef:=outvararr;
+                  { the caller finalizes what it passes to an out open array,
+                    which reads the nil array; not an uninitialized use }
+                  outvarsym.varstate:=vs_initialised;
+                  if outvarsym.realname[1]<>'$' then
+                    CGMessagePos(pt.left.fileinfo,parser_w_outvar_open_array);
+                end
+              else
+                outvarsym.vardef:=currpara.vardef;
+            end;
+          if (outvarsym.typ=staticvarsym) and
+             (outvarsym.vardef.typ<>errordef) then
+            cnodeutils.insertbssdata(tstaticvarsym(outvarsym));
+          pt.left.resultdef:=nil;
+          typecheckpass(pt.left);
+          { an out parameter discards its argument's value on entry, so a
+            seed there could never be observed }
+          if (currpara.varspez=vs_out) and assigned(pt.outvarseed) then
+            begin
+              CGMessagePos(pt.outvarseed.fileinfo,parser_e_outvar_seed_out_param);
+              pt.outvarseed.free;
+              pt.outvarseed:=nil;
+            end;
+          { a var parameter reads its argument: give the fresh variable a
+            defined value before the call - the seed when given, Default(T)
+            otherwise (file types keep their RTL init) }
+          if (currpara.varspez=vs_var) and
+             (outvarsym.vardef.typ<>errordef) then
+            begin
+              if assigned(pt.outvarseed) then
+                begin
+                  add_init_statement(cassignmentnode.create(
+                    pt.left.getcopy,pt.outvarseed));
+                  pt.outvarseed:=nil;
+                end
+              else if not((outvarsym.vardef.typ=filedef) or
+                 ((outvarsym.vardef.typ in [arraydef,recorddef,objectdef]) and
+                  not is_valid_for_default(outvarsym.vardef))) then
+                add_init_statement(cassignmentnode.create(
+                  pt.left.getcopy,
+                  cinlinenode.create(in_default_x,false,
+                    ctypenode.create(outvarsym.vardef))));
+            end;
+          exclude(pt.callparaflags,cpf_outvar_decl);
+        end;
+
       begin
         pt:=tcallparanode(left);
         oldppt:=pcallparanode(@left);
@@ -4276,6 +4352,10 @@ implementation
                     internalerror(200304081);
                   { we need the information of the previous parameter }
                   paradef:=tparavarsym(procdefinition.paras[i-1]).vardef;
+                  { an inline out-var argument needs its type before the
+                    high bound is derived from it }
+                  if cpf_outvar_decl in pt.callparaflags then
+                    bind_outvar(pt,tparavarsym(procdefinition.paras[i-1]));
                   hiddentree:=gen_high_tree(pt.left,paradef);
                   { for open array of managed type, a copy of high parameter is
                     necessary to properly initialize before the call }
@@ -4341,63 +4421,7 @@ implementation
              internalerror(200310052);
            pt.parasym:=currpara;
            if cpf_outvar_decl in pt.callparaflags then
-             begin
-               { the parameter is now known: an annotated declaration keeps its
-                 explicit type, a bare one takes the parameter's type; allocate
-                 storage if it lives at unit/program level, re-typecheck its
-                 load node, then clear the flag }
-               outvarsym:=tabstractnormalvarsym(tloadnode(pt.left).symtableentry);
-               if outvarsym.vardef.typ=errordef then
-                 begin
-                   { a bare declaration at an untyped parameter has no type to
-                     infer; the discard's hidden temp is equally untypable }
-                   if currpara.vardef.typ=formaldef then
-                     begin
-                       if outvarsym.realname[1]='$' then
-                         CGMessagePos(pt.left.fileinfo,parser_e_outvar_discard_untyped)
-                       else
-                         CGMessagePos(pt.left.fileinfo,parser_e_outvar_untyped_param);
-                       pt.outvarseed.free;
-                       pt.outvarseed:=nil;
-                     end
-                   else
-                     outvarsym.vardef:=currpara.vardef;
-                 end;
-               if (outvarsym.typ=staticvarsym) and
-                  (outvarsym.vardef.typ<>errordef) then
-                 cnodeutils.insertbssdata(tstaticvarsym(outvarsym));
-               pt.left.resultdef:=nil;
-               typecheckpass(pt.left);
-               { an out parameter discards its argument's value on entry, so a
-                 seed there could never be observed }
-               if (currpara.varspez=vs_out) and assigned(pt.outvarseed) then
-                 begin
-                   CGMessagePos(pt.outvarseed.fileinfo,parser_e_outvar_seed_out_param);
-                   pt.outvarseed.free;
-                   pt.outvarseed:=nil;
-                 end;
-               { a var parameter reads its argument: give the fresh variable a
-                 defined value before the call - the seed when given, Default(T)
-                 otherwise (file types keep their RTL init) }
-               if (currpara.varspez=vs_var) and
-                  (outvarsym.vardef.typ<>errordef) then
-                 begin
-                   if assigned(pt.outvarseed) then
-                     begin
-                       add_init_statement(cassignmentnode.create(
-                         pt.left.getcopy,pt.outvarseed));
-                       pt.outvarseed:=nil;
-                     end
-                   else if not((outvarsym.vardef.typ=filedef) or
-                      ((outvarsym.vardef.typ in [arraydef,recorddef,objectdef]) and
-                       not is_valid_for_default(outvarsym.vardef))) then
-                     add_init_statement(cassignmentnode.create(
-                       pt.left.getcopy,
-                       cinlinenode.create(in_default_x,false,
-                         ctypenode.create(outvarsym.vardef))));
-                 end;
-               exclude(pt.callparaflags,cpf_outvar_decl);
-             end;
+             bind_outvar(pt,currpara);
            oldppt:=pcallparanode(@pt.right);
            pt:=tcallparanode(pt.right);
          end;
