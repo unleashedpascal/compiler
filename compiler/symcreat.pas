@@ -1326,7 +1326,9 @@ implementation
             { special handling for this one is done in tnodeutils.wrap_proc_body }
             tsk_tcinit:
               implement_empty(pd);
-            tsk_callthrough:
+            tsk_callthrough,
+            { the per-thread init call is prepended in tnodeutils.wrap_proc_body }
+            tsk_staticlib_export:
               implement_callthrough(pd);
             tsk_callthrough_nonabstract:
               begin

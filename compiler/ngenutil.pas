@@ -714,6 +714,16 @@ implementation
     begin
       result:=maybe_insert_trashing(pd,n);
 
+      { static library export wrapper: make sure the calling thread has its
+        runtime state before the real routine runs }
+      if pd.synthetickind=tsk_staticlib_export then
+        begin
+          block:=internalstatements(stat);
+          addstatement(stat,ccallnode.createintern('fpc_staticlib_enter',nil));
+          addstatement(stat,result);
+          result:=block;
+        end;
+
       { initialise safecall result variable }
       if pd.generate_safecall_wrapper then
         begin

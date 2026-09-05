@@ -3905,7 +3905,8 @@ implementation
                         consume_all_until(_SEMICOLON);
                      end
                    else if islibrary or
-                     (target_info.system in systems_unit_program_exports) then
+                     (target_info.system in systems_unit_program_exports) or
+                     (cs_link_staticlib in current_settings.globalswitches) then
                      read_exports
                    else
                      begin

@@ -498,7 +498,7 @@ scan_e_improperly_indented_multiline_string=02120_E_Incorrectly indented multi-l
 #
 # Parser
 #
-# 03459 is the last used one
+# 03460 is the last used one
 #
 % \section{Parser messages}
 % This section lists all parser messages. The parser takes care of the
@@ -2045,12 +2045,15 @@ parser_w_parallel_for_needs_cthreads=03459_W_`for parallel` needs a threading dr
 % first spawned worker fails at run time with error 232; a driver initialized
 % after a unit that already touched threading stops the program at startup
 % with error 211.
+parser_w_staticlib_export_not_c_callable=03460_W_Exported routine "$1" is not callable from C, use cdecl or stdcall
+% A static library is linked into programs written in other languages.
+% Those can only call routines that use a C-compatible calling convention.
 %
 % \end{description}
 %
 # Type Checking
 #
-# 03459 is the last used parser one
+# 03460 is the last used parser one
 #
 # 04143 is the last used one
 #

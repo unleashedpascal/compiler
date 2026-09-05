@@ -241,6 +241,10 @@ interface
         linkothersharedlibs,       { using $L or $LINKLIB or import lib (for linux) }
         linkotherstaticlibs,
         linkotherframeworks  : tlinkcontainer;
+        { `-XA`: symbols that stay global in the static library, and
+          "mangled=exportname" pairs for exported variables }
+        staticlibexports,
+        staticlibrenames : TCmdStrList;
         mainname      : pshortstring; { alternate name for "main" procedure }
         package       : tpackage;
 
@@ -765,6 +769,8 @@ implementation
         linkotherstaticlibs:=TLinkContainer.Create;
         linkothersharedlibs:=TLinkContainer.Create;
         linkotherframeworks:=TLinkContainer.Create;
+        staticlibexports:=TCmdStrList.Create_no_double;
+        staticlibrenames:=TCmdStrList.Create;
         mainname:=nil;
         FImportLibraryList:=TFPHashObjectList.Create(true);
         crc_final:=false;
@@ -913,6 +919,10 @@ implementation
         linkotherstaticlibs := nil;
         linkothersharedlibs.Free;
         linkothersharedlibs := nil;
+        staticlibexports.Free;
+        staticlibexports := nil;
+        staticlibrenames.Free;
+        staticlibrenames := nil;
         linkotherframeworks.Free;
         linkotherframeworks := nil;
         stringdispose(mainname);
@@ -1180,6 +1190,10 @@ implementation
         linkothersharedlibs:=TLinkContainer.Create;
         linkotherframeworks.Free;
         linkotherframeworks:=TLinkContainer.Create;
+        staticlibexports.Free;
+        staticlibexports:=TCmdStrList.Create_no_double;
+        staticlibrenames.Free;
+        staticlibrenames:=TCmdStrList.Create;
         stringdispose(mainname);
         FImportLibraryList.Free;
         FImportLibraryList:=TFPHashObjectList.Create;
