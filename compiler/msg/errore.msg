@@ -4982,6 +4982,7 @@ P*2WT_Specify MPW tool type application (Classic Mac OS)
 **1X_Executable options:
 **2X9_Generate linkerscript for GNU Binutils ld older than version 2.19.1 (Linux)
 **2Xa_Generate code which allows to use more than 2 GB static data on 64 bit targets (Linux)
+**2XA_Build a standalone static library (.a) instead of an executable or shared library (same as --staticlib)
 **2Xc_Pass --shared/-dynamic to the linker (BeOS, Darwin, FreeBSD, Linux)
 **2Xd_Do not search default library path (sometimes required for cross-compiling when not using -XR)
 **2XD_Try to link units dynamically      (defines FPC_LINK_DYNAMIC)

@@ -248,7 +248,10 @@ interface
          { if applicable, the compiler generates an executable in uf2 format }
          cs_generate_uf2,
 	 { Use ld.lld linker }
-         cs_link_lld
+         cs_link_lld,
+         { `-XA` / `--staticlib`: produce a standalone static library (.a)
+           instead of an executable or shared library }
+         cs_link_staticlib
        );
        tglobalswitches = set of tglobalswitch;
 
