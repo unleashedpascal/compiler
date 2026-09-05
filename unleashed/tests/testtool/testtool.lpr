@@ -33,6 +33,7 @@ type
     CheckBinLacks: TStringArray;
     Cpu: TStringArray;
     Precompile: String;
+    ExpectMsg: String;
   end;
 
   TVerdict = (vPass, vFail, vSkip);
@@ -193,6 +194,7 @@ begin
       'CHECKBIN_LACKS': Flags.CheckBinLacks := value.Split([','], TStringSplitOptions.ExcludeEmpty);
       'CPU':        Flags.Cpu := value.Split([','], TStringSplitOptions.ExcludeEmpty);
       'PRECOMPILE': Flags.Precompile := value;
+      'EXPECTMSG':  Flags.ExpectMsg := value;
       _:            ; // unknown flag, ignore
     end;
   end;
@@ -565,6 +567,16 @@ begin
     R.Phase := 'compile-timeout';
     R.ExitCode := compileExit;
     R.Notes := Format('compile exceeded %d seconds', [timeoutSec]);
+    Exit;
+  end;
+
+  // %EXPECTMSG: the compiler output must carry the text, whatever the verdict
+  if (R.Flags.ExpectMsg <> '') and (Pos(R.Flags.ExpectMsg, compilerOut) = 0) then
+  begin
+    R.Verdict := vFail;
+    R.Phase := 'compile';
+    R.ExitCode := compileExit;
+    R.Notes := 'expected compiler output to contain "' + R.Flags.ExpectMsg + '"' + LineEnding + compilerOut;
     Exit;
   end;
 
@@ -974,6 +986,8 @@ begin
   WriteLn('                   (when set, fpc gets `-Xs -XX -CX` for cleaner binary)');
   WriteLn('  %CPU=L           comma-separated cpu list (e.g. x86_64,aarch64); the');
   WriteLn('                   test is skipped when the target cpu is not listed');
+  WriteLn('  %EXPECTMSG=S     the compiler output must contain S (quote it when it');
+  WriteLn('                   has spaces); checked for passing and %FAIL tests alike');
   WriteLn;
   WriteLn('logs are written next to testtool.exe:');
   WriteLn('  tests.log  - one line per test');
