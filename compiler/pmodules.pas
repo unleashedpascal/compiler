@@ -2738,7 +2738,9 @@ type
         if (cs_debuginfo in current_settings.moduleswitches) then
           current_debuginfo.inserttypeinfo;
 
-        if islibrary or (target_info.system in systems_unit_program_exports) then
+        { a static library exports plain symbols, no export table }
+        if (islibrary or (target_info.system in systems_unit_program_exports)) and
+           not (cs_link_staticlib in current_settings.globalswitches) then
           exportlib.generatelib;
 
         { Reference all DEBUGINFO sections from the main .fpc section }

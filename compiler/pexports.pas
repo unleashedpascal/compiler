@@ -32,7 +32,7 @@ implementation
 
     uses
        { common }
-       cutils,
+       cutils,cclasses,
        { global }
        globals,globtype,tokens,verbose,constexp,
        systems,
@@ -48,8 +48,70 @@ implementation
        { obj-c }
        objcutil,
        { link }
-       gendef,export
+       gendef,export,
+       { static library exports }
+       symcreat,paramgr
        ;
+
+
+    { `-XA`: every export becomes a global symbol of the static library.
+      A routine gets a wrapper carrying the export name that runs the
+      per-thread runtime init before calling through; on i386-win32 the
+      wrapper also carries the C-decorated name. An exported variable is
+      renamed to the export name when the library is linked. }
+    procedure staticlib_export(sym: tsym; const exportname: string);
+      var
+        pd,
+        wrapperpd : tprocdef;
+        decorated : string;
+      begin
+        case sym.typ of
+          procsym:
+            begin
+              pd:=tprocdef(tprocsym(sym).procdeflist[0]);
+              if not (pd.proccalloption in [pocall_cdecl,pocall_cppdecl,pocall_stdcall,pocall_mwpascal]) then
+                Message1(parser_w_staticlib_export_not_c_callable,exportname);
+              { a routine that already carries the export name (public name)
+                keeps its own symbol and gets no wrapper }
+              if not pd.has_alias_name(exportname) then
+                begin
+                  wrapperpd:=create_procdef_alias(pd,'$fpc_exported$'+exportname,exportname,
+                    current_module.localsymtable,nil,tsk_staticlib_export,pd);
+                  { only the host program calls it, no unused hint }
+                  inc(wrapperpd.procsym.refs);
+                  if target_info.system=system_i386_win32 then
+                    begin
+                      decorated:='';
+                      case pd.proccalloption of
+                        pocall_cdecl,pocall_cppdecl,pocall_mwpascal:
+                          decorated:='_'+exportname;
+                        pocall_stdcall:
+                          begin
+                            paramanager.create_paraloc_info(wrapperpd,callerside);
+                            decorated:='_'+exportname+'@'+tostr(wrapperpd.callerargareasize);
+                          end;
+                        else
+                          ;
+                      end;
+                      if decorated<>'' then
+                        begin
+                          wrapperpd.aliasnames.concat(decorated);
+                          current_module.staticlibexports.concat(decorated);
+                        end;
+                    end;
+                end;
+              current_module.staticlibexports.concat(exportname);
+            end;
+          staticvarsym:
+            begin
+              if tstaticvarsym(sym).mangledname<>exportname then
+                current_module.staticlibrenames.concat(tstaticvarsym(sym).mangledname+'='+exportname);
+              current_module.staticlibexports.concat(exportname);
+            end;
+          else
+            ;
+        end;
+      end;
 
 
     procedure read_exports;
@@ -64,6 +126,7 @@ implementation
         hpname     : shortstring;
         index      : longint;
         options    : texportoptions;
+        aliasitem  : TCmdStrListItem;
 
         function IsGreater(hp1,hp2:texported_item):boolean;
         var
@@ -216,7 +279,19 @@ implementation
                        { the parent unit is used in that)                }
                        if (options*[eo_name,eo_index]=[]) and
                           (tprocdef(tprocsym(srsym).procdeflist[0]).aliasnames.count>1) then
-                         exportallprocsymnames(tprocsym(srsym),options)
+                         begin
+                           exportallprocsymnames(tprocsym(srsym),options);
+                           { the aliases are real symbols already, keep them global }
+                           if cs_link_staticlib in current_settings.globalswitches then
+                             begin
+                               aliasitem:=TCmdStrListItem(tprocdef(tprocsym(srsym).procdeflist[0]).aliasnames.first);
+                               while assigned(aliasitem) do
+                                 begin
+                                   current_module.staticlibexports.concat(aliasitem.str);
+                                   aliasitem:=TCmdStrListItem(aliasitem.next);
+                                 end;
+                             end;
+                         end
                        else
                          begin
                            { there's a name or an index -> export only one name   }
@@ -238,6 +313,8 @@ implementation
                                hpname:=orgs;
 
                            exportprocsym(srsym,hpname,index,options);
+                           if cs_link_staticlib in current_settings.globalswitches then
+                             staticlib_export(srsym,hpname);
                          end
                       end;
                     staticvarsym:
@@ -249,6 +326,8 @@ implementation
                           else
                             hpname:=orgs;
                         exportvarsym(srsym,hpname,index,options);
+                        if cs_link_staticlib in current_settings.globalswitches then
+                          staticlib_export(srsym,hpname);
                       end;
                     typesym:
                       begin

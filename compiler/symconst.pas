@@ -522,7 +522,8 @@ type
     tsk_wasm_suspending_first, // WebAssembly suspending external wrapper, suspender object is first argument
     tsk_wasm_suspending_last,  // WebAssembly suspending external wrapper, suspender object is last argument
     tsk_wasm_promising,        // WebAssembly promising export wrapper
-    tsk_invoke_helper          // Method invoke helper, primarily used in WebAssembly.
+    tsk_invoke_helper,         // Method invoke helper, primarily used in WebAssembly.
+    tsk_staticlib_export       // static library export wrapper: per-thread runtime init, then call through (skpara)
   );
 
   { synthetic procdef supplementary information (tprocdef.skpara) }
