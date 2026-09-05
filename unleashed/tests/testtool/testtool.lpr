@@ -34,6 +34,7 @@ type
     Cpu: TStringArray;
     Precompile: String;
     ExpectMsg: String;
+    Prelib: String;
   end;
 
   TVerdict = (vPass, vFail, vSkip);
@@ -70,6 +71,7 @@ var
   GOnlyFailed: Boolean;
   GTimeoutSec: Integer = 30;
   GParallel: Integer;
+  GUtilsDir: String;
   GModeOverride: String;
   GModeswitches: TStringArray;
   GResults: array of TResult;
@@ -197,6 +199,7 @@ begin
       'CPU':        Flags.Cpu := value.Split([','], TStringSplitOptions.ExcludeEmpty);
       'PRECOMPILE': Flags.Precompile := value;
       'EXPECTMSG':  Flags.ExpectMsg := value;
+      'PRELIB':     Flags.Prelib := value;
       _:            ; // unknown flag, ignore
     end;
   end;
@@ -483,12 +486,21 @@ begin
   end;
 end;
 
+// %PRELIB leaves lib<stem>.a and <stem>.o in the worker .tmp/ dir
+procedure CleanupLibArtifacts(const LibStem: String);
+begin
+  if LibStem = '' then Exit;
+  var dir := IncludeTrailingPathDelimiter(GTempDir);
+  if FileExists(dir + 'lib' + LibStem + '.a') then DeleteFile(dir + 'lib' + LibStem + '.a');
+  if FileExists(dir + LibStem + '.o') then DeleteFile(dir + LibStem + '.o');
+end;
+
 procedure CleanupTempArtifacts(const SrcPath, PatchedSrc, ExePath: String; Failed: Boolean);
 begin
   if GKeepTemp and Failed then Exit;
   if (ExePath <> '') and FileExists(ExePath) then
     DeleteFile(ExePath);
-  var exts: array of String := [GExeExt, '.o', '.ppu', '.lst', '.res', '.compiled', '.rsj'];
+  var exts: array of String := [GExeExt, '.o', '.ppu', '.lst', '.res', '.compiled', '.rsj', '.a'];
   var base := if PatchedSrc <> '' then PatchedSrc else SrcPath;
   var stem := IncludeTrailingPathDelimiter(GTempDir) +
               ChangeFileExt(ExtractFileName(base), '');
@@ -604,7 +616,40 @@ begin
     end;
   end;
 
+  // %PRELIB=lib.pas: build a static library (-XA) into .tmp/ as lib<name>.a,
+  // the test links it with {$linklib name}; the ld shipped with fpc cannot
+  // do a relocatable link with gc, so --utilsdir points at a newer binutils
+  // (the cleanup is deferred at routine level: a defer inside the block
+  // would fire before the test is even compiled)
+  var libStem := if R.Flags.Prelib <> '' then ChangeFileExt(R.Flags.Prelib, '') else '';
+  defer CleanupLibArtifacts(libStem);
+  if R.Flags.Prelib <> '' then
+  begin
+    var libSrc := ExtractFilePath(SrcPath) + R.Flags.Prelib;
+    var libFile := IncludeTrailingPathDelimiter(GTempDir) + 'lib' + libStem + '.a';
+    var libArgs: TStringArray := ['-FE' + GTempDir, '-FU' + GTempDir, '-T' + GTargetOS, '-P' + GTargetCPU,
+                                  '-g-', '-CX', '-XX', '-XA', '-o' + libFile];
+    if GUtilsDir <> '' then
+      libArgs := libArgs + ['-FD' + GUtilsDir];
+    libArgs := libArgs + [libSrc];
+    var libExit: Integer;
+    var libOut: String;
+    var libTimedOut: Boolean;
+    RunCmd(GCompilerPath, libArgs, GBaseDir, timeoutSec, libExit, libOut, libTimedOut);
+    if libTimedOut or (libExit <> 0) then
+    begin
+      R.Verdict := vFail;
+      R.Phase := 'prelib';
+      R.ExitCode := libExit;
+      R.Notes := if libTimedOut then
+        Format('prelib exceeded %d seconds', [timeoutSec]) else libOut;
+      Exit;
+    end;
+  end;
+
   var args := BuildCompileArgs(SrcPath, R.Flags, patched, needsCmdLineMode);
+  if R.Flags.Prelib <> '' then
+    args := args + ['-Fl' + GTempDir];
   var compileExit: Integer;
   var compilerOut: String;
   var compileTimedOut: Boolean;
@@ -710,9 +755,9 @@ begin
   end;
 end;
 
-// a unit source without any %-flag comment is a %PRECOMPILE helper for some
-// test, not a runnable test; a unit carrying flags (e.g. %NORUN compile-only
-// regression) stays a test
+// a unit or library source without any %-flag comment is a %PRECOMPILE /
+// %PRELIB helper for some test, not a runnable test; one carrying flags
+// (e.g. %NORUN compile-only regression) stays a test
 function IsUnitSource(const Path: String): Boolean;
 begin
   Result := false;
@@ -737,8 +782,8 @@ begin
     end
     else
       break;
-  Result := (Copy(head, i, 4) = 'unit') and (i + 4 <= Length(head)) and
-            (head[i + 4] in [' ', #9, #10, #13]);
+  Result := ((Copy(head, i, 4) = 'unit') and (i + 4 <= Length(head)) and (head[i + 4] in [' ', #9, #10, #13])) or
+            ((Copy(head, i, 7) = 'library') and (i + 7 <= Length(head)) and (head[i + 7] in [' ', #9, #10, #13]));
 end;
 
 procedure DiscoverTests(const Dir: String; List: TStringList);
@@ -888,6 +933,7 @@ begin
     if r.Flags.NoRun then head += ' (%NORUN)';
     if r.Flags.Opt <> '' then head += ' (%OPT=' + r.Flags.Opt + ')';
     if r.Flags.Precompile <> '' then head += ' (%PRECOMPILE=' + r.Flags.Precompile + ')';
+    if r.Flags.Prelib <> '' then head += ' (%PRELIB=' + r.Flags.Prelib + ')';
     if r.Flags.Timeout > 0 then head += ' (%TIMEOUT=' + IntToStr(r.Flags.Timeout) + ')';
     if Length(r.Flags.CheckBinHas) > 0 then
       head += ' (%CHECKBIN_HAS=' + String.Join(',', r.Flags.CheckBinHas) + ')';
@@ -1025,6 +1071,8 @@ begin
   WriteLn('  --only-failed    rerun only tests that failed in the previous fail.log');
   WriteLn('  --timeout=N      per-test timeout in seconds (default 30; 0 = no limit)');
   WriteLn('  --parallel=N     run N workers in parallel (default: half of CPU cores)');
+  WriteLn('  --utilsdir=DIR   binutils dir passed as -FD to %PRELIB builds (a static');
+  WriteLn('                   library needs a newer ld than the one shipped with fpc)');
   WriteLn('  --mode=NAME      override {$mode} in source (or pass -MNAME if absent)');
   WriteLn('  --modeswitch=L   comma-separated list, e.g. `a+,b-,c`; injected as');
   WriteLn('                   {$modeswitch X+/-} below source modeswitches/{$mode}');
@@ -1042,6 +1090,9 @@ begin
   WriteLn('                   test is skipped when the target cpu is not listed');
   WriteLn('  %EXPECTMSG=S     the compiler output must contain S (quote it when it');
   WriteLn('                   has spaces); checked for passing and %FAIL tests alike');
+  WriteLn('  %PRELIB=lib.pas  build lib.pas next to the test as a static library');
+  WriteLn('                   (-XA) into .tmp/ as lib<name>.a before the test; the');
+  WriteLn('                   test links it with {$linklib name}');
   WriteLn;
   WriteLn('logs are written next to testtool.exe:');
   WriteLn('  tests.log  - one line per test');
@@ -1068,6 +1119,7 @@ begin
       a = '--only-failed':       GOnlyFailed := true;
       a.StartsWith('--timeout='):    GTimeoutSec := StrToIntDef(Copy(a, 11, MaxInt), 30);
       a.StartsWith('--parallel='):   GParallel := StrToIntDef(Copy(a, 12, MaxInt), 0);
+      a.StartsWith('--utilsdir='):   GUtilsDir := Copy(a, 12, MaxInt);
       a.StartsWith('--mode='):       GModeOverride := Copy(a, 8, MaxInt);
       a.StartsWith('--modeswitch='): GModeswitches := Copy(a, 14, MaxInt).Split([','], TStringSplitOptions.ExcludeEmpty);
       (a = '--help') or (a = '-h'):
