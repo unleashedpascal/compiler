@@ -1613,6 +1613,10 @@ begin
       autoproperty_field_prefix := more;
     exit;
   end;
+  if opt='--staticlib' then begin
+    include(init_settings.globalswitches,cs_link_staticlib);
+    exit;
+  end;
   if opt='--striprtti' then begin
     force_striprtti_cli:=true;
     exit;
@@ -4513,6 +4517,13 @@ begin
            include(init_settings.globalswitches,cs_link_smart);
            exclude(init_settings.globalswitches,cs_link_shared);
            LinkTypeSetExplicitly:=true;
+         end;
+       'A' :
+         begin
+           if UnsetBool(More, j, opt, false) then
+             exclude(init_settings.globalswitches,cs_link_staticlib)
+           else
+             include(init_settings.globalswitches,cs_link_staticlib);
          end;
        '-' :
          begin
