@@ -158,15 +158,23 @@ Two tuples of matching shape (same field count, same types in order) are compati
 
 ```pascal
 function makePair<A, B>(x: A; y: B): (A, B);
+function zip<A, B>(const xs: array of A; const ys: array of B): array of (A, B);
 ```
 
-`array of (A, B)` as a generic function return type hits an existing FPC limitation - alias it first:
+A tuple type is also accepted directly as a specialization argument, no alias needed:
 
 ```pascal
-type TArrOfPair = array of (integer, string);
+function make(out q: TArray<(a: integer; b: string)>): boolean;
+procedure show(const items: TArray<(a: integer; b: string)>);
 
-function zip<A, B>(xs: array of A; ys: array of B): TArrOfPair;
+var stored: TArray<(a: integer; b: string)>;
 ```
+
+The same shape written in two places (two declarations, two routines, two units) names the same specialization: `stored := t` works, and so does passing `stored` to a `var` or `out` parameter declared with that type. A positional `TArray<(integer, integer)>` and a named `TArray<(a, b: integer)>` are separate specializations that stay assignment compatible, like the tuples themselves; two named tuples with different field names are distinct types.
+
+This works in every type position: parameters of any kind, result types, `var` sections, inline `var`, record fields, `type` aliases, inline specializations in expressions (`TBox<(a: integer; b: string)>.Create`, `makePair<(integer, string), integer>(...)`), and it nests: `TArray<TArray<(integer, string)>>`, `TArray<array of (a: integer; b: string)>`.
+
+Other anonymous types are accepted the same way in unleashed mode: `array of T`, `array[N] of T`, `set of T`, `^T` and `record ... end`. Arrays, sets and pointers are matched by shape like tuples; an anonymous `record` is a new type each time, as in a type declaration.
 
 ## Typed constants
 

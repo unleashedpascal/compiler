@@ -48,6 +48,9 @@ interface
     { helpers to build anonymous tuple records, exported for pexpr }
     function make_tuple_recdef:trecorddef;
     procedure add_tuple_field(recdef:trecorddef;const fname:TIDString;ftype:tdef);
+    { parses a tuple type after `(` was consumed; false (nothing consumed)
+      when the tokens do not form one. Exported for pgenutil }
+    function try_consume_tuple_type(out def:tdef):boolean;
     { bracket a structured type definition; end_struct_decl redoes the layout
       of tuples parsed inside it (see make_tuple_recdef) }
     procedure begin_struct_decl;
@@ -477,11 +480,6 @@ implementation
       end;
 
 
-    { forward for tuple dispatch inside single_type; implementation is
-      below result_type since the helpers it calls need single_type first }
-    function try_consume_tuple_type(out def:tdef):boolean; forward;
-
-
     procedure single_type(out def:tdef;options:TSingleTypeOptions);
 
        function handle_dummysym(sym:tsym):tdef;
@@ -749,13 +747,24 @@ implementation
 
 
     function result_type(options:TSingleTypeOptions):tdef;
+      var
+        old_block_type : tblock_type;
       begin
         { unleashed: inline `array of X` / `packed array ...` / `bitpacked
           array ...` as a function result goes through read_anon_type; classic
           modes keep requiring a named type identifier (stock FPC behaviour) }
-        if (m_unleashed in current_settings.modeswitches) and
-           (current_scanner.token in [_ARRAY,_PACKED,_BITPACKED]) then
-          read_anon_type(result,false,nil)
+        if m_unleashed in current_settings.modeswitches then
+          begin
+            { scanned like a var section, so that `^T` right after `<` in
+              a specialization is a pointer type and not a control char }
+            old_block_type:=block_type;
+            block_type:=bt_var_type;
+            if current_scanner.token in [_ARRAY,_PACKED,_BITPACKED] then
+              read_anon_type(result,false,nil)
+            else
+              single_type(result,options);
+            block_type:=old_block_type;
+          end
         else
           single_type(result,options);
         { file types cannot be function results }

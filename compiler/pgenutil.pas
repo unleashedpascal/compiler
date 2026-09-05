@@ -47,6 +47,8 @@ uses
     function check_generic_constraints(genericdef:tstoreddef;paramlist:tfpobjectlist;poslist:tfplist):boolean;
     function parse_generic_parameters(allowconstraints:boolean):tfphashobjectlist;
     function parse_generic_specialization_types(paramlist:tfpobjectlist;poslist:tfplist;out prettyname,specializename:ansistring):boolean;
+    function anon_type_arg_ahead:boolean;
+    function parse_anon_type_arg:tnode;
     procedure insert_generic_parameter_types(def:tstoreddef;genericdef:tstoreddef;genericlist:tfphashobjectlist;isfwd:boolean);
     procedure maybe_insert_generic_rename_symbol(const name:tidstring;genericlist:tfphashobjectlist);
     function generate_generic_name(const name:tidstring;const specializename:ansistring;const owner_hierarchy:ansistring):tidstring;
@@ -79,7 +81,7 @@ uses
   { modules }
   fmodule,
   { node }
-  nobj,ncon,ncal,
+  nobj,ncon,ncal,nld,
   { parser }
   scanner,
   pbase,pexpr,pdecsub,ptype,psub,pparautl,pdecl,procdefutil;
@@ -89,6 +91,118 @@ uses
   const
     tgeneric_param_const_types : tdeftypeset = [orddef,stringdef,floatdef,setdef,pointerdef,enumdef];
     tgeneric_param_nodes : tnodetypeset = [typen,ordconstn,stringconstn,realconstn,setconstn,niln];
+
+    { the hidden type symbol given to an anonymous type written directly as
+      a specialization argument, see parse_anon_type_arg }
+    function is_anon_arg_typesym(sym:tsym):boolean;
+      begin
+        result:=assigned(sym) and
+          ([sp_internal,sp_generic_unnamed_type]<=sym.symoptions);
+      end;
+
+
+    { the part of a specialization name that identifies one argument: the
+      def id for a named type, the shape for an anonymous one (tuple, array,
+      set, pointer) so that `TArray<(a: integer; b: string)>` written twice
+      names the same specialization }
+    function generic_arg_key(def:tdef):ansistring;
+      var
+        module : tmodule;
+        i : longint;
+        sym : tsym;
+      begin
+        if not assigned(def.typesym) or is_anon_arg_typesym(def.typesym) then
+          case def.typ of
+            recorddef:
+              if df_tuple in def.defoptions then
+                begin
+                  result:='tuple(';
+                  for i:=0 to trecorddef(def).symtable.symlist.count-1 do
+                    begin
+                      sym:=tsym(trecorddef(def).symtable.symlist[i]);
+                      if sym.typ=fieldvarsym then
+                        result:=result+sym.name+':'+generic_arg_key(tfieldvarsym(sym).vardef)+';';
+                    end;
+                  exit(result+')');
+                end;
+            arraydef:
+              if is_dynamic_array(def) then
+                exit('dynarray('+generic_arg_key(tarraydef(def).elementdef)+')')
+              else if not is_special_array(def) then
+                begin
+                  if is_packed_array(def) then
+                    result:='packed'
+                  else
+                    result:='';
+                  exit(result+'array['+tostr(tarraydef(def).lowrange)+'..'+tostr(tarraydef(def).highrange)+
+                    ':'+generic_arg_key(tarraydef(def).rangedef)+']('+generic_arg_key(tarraydef(def).elementdef)+')');
+                end;
+            setdef:
+              exit('set('+generic_arg_key(tsetdef(def).elementdef)+')');
+            pointerdef:
+              exit('ptr('+generic_arg_key(tpointerdef(def).pointeddef)+')');
+            else
+              ;
+          end;
+        if assigned(def.owner) then
+          module:=find_module_from_symtable(def.owner)
+        else
+          module:=current_module;
+        if not assigned(module) then
+          internalerror(2026090501);
+        result:=hexstr(module.moduleid,8)+'$$'+def.unique_id_str;
+      end;
+
+
+    { readable form of an anonymous specialization argument for the
+      specialization's pretty name }
+    function generic_arg_prettyname(def:tdef):ansistring;
+      var
+        i : longint;
+        sym : tsym;
+        positional : boolean;
+      begin
+        if not assigned(def.typesym) or is_anon_arg_typesym(def.typesym) then
+          case def.typ of
+            recorddef:
+              if df_tuple in def.defoptions then
+                begin
+                  result:='(';
+                  positional:=true;
+                  for i:=0 to trecorddef(def).symtable.symlist.count-1 do
+                    begin
+                      sym:=tsym(trecorddef(def).symtable.symlist[i]);
+                      if sym.typ<>fieldvarsym then
+                        continue;
+                      if length(result)>1 then
+                        result:=result+', ';
+                      if sym.name<>'_'+tostr(i+1) then
+                        positional:=false;
+                      if not positional then
+                        result:=result+sym.realname+': ';
+                      result:=result+generic_arg_prettyname(tfieldvarsym(sym).vardef);
+                    end;
+                  exit(result+')');
+                end;
+            arraydef:
+              if is_dynamic_array(def) then
+                exit('array of '+generic_arg_prettyname(tarraydef(def).elementdef))
+              else if not is_special_array(def) then
+                exit('array['+tostr(tarraydef(def).lowrange)+'..'+tostr(tarraydef(def).highrange)+'] of '+
+                  generic_arg_prettyname(tarraydef(def).elementdef));
+            setdef:
+              exit('set of '+generic_arg_prettyname(tsetdef(def).elementdef));
+            pointerdef:
+              exit('^'+generic_arg_prettyname(tpointerdef(def).pointeddef));
+            else
+              ;
+          end;
+        if assigned(def.typesym) then
+          result:=def.fullownerhierarchyname(true,true)+def.typesym.prettyname
+        else
+          result:=def.typename;
+      end;
+
 
     procedure make_prettystring(paramtype:tdef;first:boolean;constprettyname:ansistring;var prettyname,specializename:ansistring);
       var
@@ -102,7 +216,7 @@ uses
           module:=current_module;
         if not assigned(module) then
           internalerror(2016112802);
-        namepart:='_$'+hexstr(module.moduleid,8)+'$$'+paramtype.unique_id_str;
+        namepart:='_$'+generic_arg_key(paramtype);
         if constprettyname<>'' then
           namepart:=namepart+'$$'+constprettyname;
         { we use the full name of the type to uniquely identify it }
@@ -122,6 +236,8 @@ uses
           prettyname:=prettyname+',';
         if constprettyname<>'' then
           prettyname:=prettyname+constprettyname
+        else if is_anon_arg_typesym(paramtype.typesym) then
+          prettyname:=prettyname+generic_arg_prettyname(paramtype)
         else
           prettyname:=prettyname+prettynamepart+paramtype.typesym.prettyname;
       end;
@@ -551,6 +667,60 @@ uses
           end;
       end;
 
+    { true when the next token opens a tuple, array, set, pointer or record
+      type written directly as a specialization argument }
+    function anon_type_arg_ahead:boolean;
+      begin
+        case current_scanner.token of
+          _LKLAMMER:
+            result:=m_tuples in current_settings.modeswitches;
+          _ARRAY,_SET,_CARET,_RECORD,_PACKED,_BITPACKED:
+            result:=m_unleashed in current_settings.modeswitches;
+          else
+            result:=false;
+        end;
+      end;
+
+
+    { parses an anonymous type written directly as a specialization argument
+      and returns it as a type node. The def is moved out of the scope it was
+      parsed in (a parameter list, a routine body) to the unit level and gets
+      a hidden typesym, so the rest of the specialization machinery treats it
+      like a named argument. A `(` that does not open a tuple is a
+      parenthesized constant argument instead }
+    function parse_anon_type_arg:tnode;
+      var
+        def : tdef;
+        st : tsymtable;
+        ts : ttypesym;
+      begin
+        if current_scanner.token=_LKLAMMER then
+          begin
+            consume(_LKLAMMER);
+            if not try_consume_tuple_type(def) then
+              begin
+                result:=comp_expr([ef_accept_equal]);
+                consume(_RKLAMMER);
+                exit;
+              end;
+          end
+        else
+          read_anon_type(def,false,nil);
+        if def.typ<>errordef then
+          begin
+            st:=def.getreusablesymtab;
+            if def.owner<>st then
+              def.ChangeOwner(st);
+            ts:=ctypesym.create('$anonarg$'+def.unique_id_str,def);
+            ts.symoptions:=ts.symoptions+[sp_internal,sp_generic_unnamed_type];
+            ts.increfcount;
+            st.insertsym(ts);
+          end;
+        result:=ctypenode.create(def);
+        result.resultdef:=def;
+      end;
+
+
     function parse_generic_specialization_types_internal(paramlist:tfpobjectlist;poslist:tfplist;out prettyname,specializename:ansistring;parsedtype:tdef;parsedpos:tfileposinfo):boolean;
       var
         old_block_type : tblock_type;
@@ -582,9 +752,12 @@ uses
             module:=find_module_from_symtable(parsedtype.owner);
             if not assigned(module) then
               internalerror(2016112801);
-            namepart:='_$'+hexstr(module.moduleid,8)+'$$'+parsedtype.unique_id_str;
+            namepart:='_$'+generic_arg_key(parsedtype);
             specializename:='$'+namepart;
-            prettyname:=parsedtype.fullownerhierarchyname(true,true)+parsedtype.typesym.prettyname;
+            if is_anon_arg_typesym(parsedtype.typesym) then
+              prettyname:=generic_arg_prettyname(parsedtype)
+            else
+              prettyname:=parsedtype.fullownerhierarchyname(true,true)+parsedtype.typesym.prettyname;
             if assigned(poslist) then
               begin
                 New(parampos);
@@ -601,7 +774,16 @@ uses
               consume(_COMMA);
             block_type:=bt_type;
             tmpparampos:=current_filepos;
-            typeparam:=factor(false,[ef_accept_equal]);
+            if anon_type_arg_ahead then
+              begin
+                { parsed like a type in the enclosing block: in a type block
+                  `^T` may point forward, elsewhere it must resolve now }
+                block_type:=old_block_type;
+                typeparam:=parse_anon_type_arg;
+                block_type:=bt_type;
+              end
+            else
+              typeparam:=factor(false,[ef_accept_equal]);
             { determine if the typeparam node is a valid type or const }
             validparam:=typeparam.nodetype in tgeneric_param_nodes;
             if validparam then

@@ -7143,6 +7143,12 @@ implementation
                  else if oldt=_OP_NOT then
                    consume(_OP_IN);
                end;
+             { an anonymous type as the first argument of an inline
+               specialization, e.g. `TBox<(a: integer; b: string)>.Create`;
+               the expression parser cannot read it }
+             if (oldt=_LT) and getgenericsym(p1,gensym) and anon_type_arg_ahead then
+               p2:=parse_anon_type_arg
+             else
              if pred_level=highest_precedence then
                p2:=factor(false,[])
              else
