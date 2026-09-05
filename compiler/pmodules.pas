@@ -2919,9 +2919,23 @@ type
             main_procinfo:=create_main_proc(mainaliasname,potype_proginit,curr.localsymtable);
             main_procinfo.procdef.aliasnames.concat('PASCALMAIN');
           end;
-        main_procinfo.parse_body;
-        { save file pos for debuginfo }
-        curr.mainfilepos:=main_procinfo.entrypos;
+        { in a static library the body of a `library` runs from the
+          init/final table when the host calls rtlInit, so it is parsed as
+          the module init routine; PASCALMAIN stays an empty stub }
+        if islibrary and (cs_link_staticlib in current_settings.globalswitches) then
+          begin
+            main_procinfo.code:=cnothingnode.create;
+            init_procinfo:=create_main_proc(make_mangledname('',curr.localsymtable,'init$'),potype_unitinit,curr.localsymtable);
+            init_procinfo.procdef.aliasnames.concat(make_mangledname('INIT$',curr.localsymtable,''));
+            init_procinfo.parse_body;
+            curr.mainfilepos:=init_procinfo.entrypos;
+          end
+        else
+          begin
+            main_procinfo.parse_body;
+            { save file pos for debuginfo }
+            curr.mainfilepos:=main_procinfo.entrypos;
+          end;
 
         { `$entrypoint X` declared earlier: resolve X to a real procedure
           and stash its mangled name for the linker step }
@@ -2972,7 +2986,8 @@ type
 
         { should we force unit initialization? }
         force_init_final:=tstaticsymtable(curr.localsymtable).needs_init_final;
-        if force_init_final or cnodeutils.force_init then
+        if (force_init_final or cnodeutils.force_init) and
+           not assigned(init_procinfo) then
           init_procinfo:=gen_implicit_initfinal(curr,mf_init,curr.localsymtable);
 
         { Add symbol to the exports section for win32 so smartlinking a
@@ -3005,7 +3020,7 @@ type
          { be finalized, so they can finalize any units they use                       }
          { Place in "pure assembler" list so that the llvm assembler writer
            directly emits the generated directives }
-         if (islibrary) then
+         if islibrary and not (cs_link_staticlib in current_settings.globalswitches) then
            cnodeutils.RegisterModuleFiniFunction(search_system_proc('fpc_lib_exit'));
 
         { all labels must be defined before generating code }
