@@ -71,16 +71,34 @@ interface
         procedure ConcatEntryName; virtual;
       end;
 
+      { a DLL import known to the program, keyed by its mangled name; the
+        static library pipeline writes import stubs for the ones its code
+        still refers to after the unused sections are dropped }
+      TStaticLibImport=class(TFPHashObject)
+         dllname,
+         symname : string;
+         ordnr   : longint;
+         isvar   : boolean;
+      end;
+
       TExternalLinkerWin=class(texternallinker)
       private
+         staticlibimports : TFPHashObjectList;
          Function  WriteResponseFile(isdll:boolean) : Boolean;
          Function  PostProcessExecutable(const fn:string;isdll:boolean) : Boolean;
+         function  WriteImportObject(const fn: TCmdStr; needed: TCmdStrList): boolean;
       public
          Constructor Create;override;
+         Destructor Destroy;override;
          Procedure SetDefaultInfo;override;
          function  MakeExecutable:boolean;override;
          function  MakeSharedLibrary:boolean;override;
          procedure InitSysInitUnitName;override;
+         procedure AddImportSymbol(const libname,symname,symmangledname:TCmdStr;OrdNr: longint;isvar:boolean);override;
+         function  RelocatableLinkOptions: TCmdStr;override;
+         function  RelocatableMergeScript: ansistring;override;
+         function  PostProcessRelocatable(const fn: TCmdStr; var extraobjects: TCmdStr): boolean;override;
+         function  PostProcessMerged(const fn: TCmdStr): boolean;override;
       end;
 
       TDLLScannerWin=class(tDLLScanner)
@@ -95,9 +113,9 @@ implementation
 
   uses
     SysUtils,
-    cfileutl,
+    cfileutl,cstreams,
     cgutils,dbgbase,
-    owar,ogbase
+    owbase,owar,ogbase
 {$ifdef SUPPORT_OMF}
     ,ogomf
 {$endif SUPPORT_OMF}
@@ -1138,6 +1156,495 @@ implementation
         { allow duplicated libs (PM) }
         SharedLibFiles.doubles:=true;
         StaticLibFiles.doubles:=true;
+        staticlibimports:=TFPHashObjectList.Create(true);
+      end;
+
+
+    Destructor TExternalLinkerWin.Destroy;
+      begin
+        staticlibimports.Free;
+        inherited Destroy;
+      end;
+
+
+    procedure TExternalLinkerWin.AddImportSymbol(const libname,symname,symmangledname:TCmdStr;OrdNr: longint;isvar:boolean);
+      var
+        imp : TStaticLibImport;
+      begin
+        if not (cs_link_staticlib in current_settings.globalswitches) then
+          exit;
+        imp:=TStaticLibImport.Create(staticlibimports,symmangledname);
+        imp.dllname:=libname;
+        imp.symname:=symname;
+        imp.ordnr:=OrdNr;
+        imp.isvar:=isvar;
+      end;
+
+
+    { the TLS callback of sysinit is kept as a gc root: the host's C
+      runtime registers it through its TLS directory, which gives the
+      library its per-thread init and cleanup on thread attach and detach }
+    function TExternalLinkerWin.RelocatableLinkOptions: TCmdStr;
+      begin
+{$ifdef x86_64}
+        result:='-m i386pep';
+{$else}
+        result:='-m i386pe';
+{$endif}
+        result:=result+' -u __FPC_tls_callbacks';
+      end;
+
+
+    { the default script of a C toolchain leaves `.data.*`, `.rdata.*` and
+      `.bss.*` as separate output sections and Windows loads at most 96 of
+      them, so the second pass folds the smartlink sections into the
+      standard ones; `.idata$*` and `.CRT$*` keep their names for the
+      host linker to sort }
+    function TExternalLinkerWin.RelocatableMergeScript: ansistring;
+      begin
+        result:=
+{$ifdef x86_64}
+          'OUTPUT_FORMAT(pe-x86-64)'#10+
+{$else}
+          'OUTPUT_FORMAT(pe-i386)'#10+
+{$endif}
+          'SECTIONS'#10+
+          '{'#10+
+          '  .text : { *(.text .text.*) }'#10+
+          '  .data : { *(.data .data.* .fpc*) }'#10+
+          '  .rdata : { *(.rdata .rdata.* .rodata .rodata.*) }'#10+
+          '  .bss : { *(.bss .bss.*) }'#10+
+          '  .pdata : { *(.pdata .pdata.*) }'#10+
+          '  .xdata : { *(.xdata .xdata.*) }'#10+
+          '}'#10;
+      end;
+
+
+    { two things a C toolchain cannot digest in the output of `ld -r`:
+      - the dummy IMAGE_REL_*_ABSOLUTE relocation the internal assembler
+        adds from a routine to its `.pdata` (it keeps the unwind data alive
+        for the internal linker, GNU ld 2.41 refuses it when building the
+        relocation table of the host program): dropped
+      - `.pdata`/`.xdata` of dropped routines, which ld keeps and which now
+        relocate against sections that no longer exist: emptied
+      The imports the surviving code refers to are collected on the way
+      and get one import object with the thunks and `.idata$*` entries. }
+    function TExternalLinkerWin.PostProcessRelocatable(const fn: TCmdStr; var extraobjects: TCmdStr): boolean;
+      type
+        tsymentry = packed record
+          name    : array[0..7] of char;
+          value   : longword;
+          section : smallint;
+          typ     : word;
+          storageclass : byte;
+          aux     : byte;
+        end;
+        psymentry = ^tsymentry;
+        trelentry = packed record
+          address : longword;
+          sym     : longword;
+          typ     : word;
+        end;
+        prelentry = ^trelentry;
+      var
+        f : TCCustomFileStream;
+        buf : pbyte;
+        size : longint;
+        hdr : ^tcoffheader;
+        sec : ^tcoffsechdr;
+        sym : psymentry;
+        rel,keep : prelentry;
+        strtab : pchar;
+        undefsection : array of boolean;
+        undefname : array of string;
+        needed : TCmdStrList;
+        i,j,nkept : longint;
+        dead : boolean;
+        s : string;
+      begin
+        result:=false;
+        f:=CFileStreamClass.Create(fn,fmOpenRead);
+        if CStreamError<>0 then
+          begin
+            f.Free;
+            exit;
+          end;
+        size:=f.Size;
+        getmem(buf,size);
+        f.Read(buf^,size);
+        f.Free;
+        hdr:=pointer(buf);
+        strtab:=pchar(buf)+hdr^.sympos+hdr^.syms*sizeof(tsymentry);
+        { undefined symbols: section names (dead references) and imports }
+        setlength(undefsection,hdr^.syms);
+        setlength(undefname,hdr^.syms);
+        i:=0;
+        while i<hdr^.syms do
+          begin
+            sym:=psymentry(buf+hdr^.sympos+i*sizeof(tsymentry));
+            if sym^.section=0 then
+              begin
+                if plongword(@sym^.name[0])^=0 then
+                  s:=strpas(strtab+plongword(@sym^.name[4])^)
+                else
+                  begin
+                    s:='';
+                    j:=0;
+                    while (j<8) and (sym^.name[j]<>#0) do
+                      begin
+                        s:=s+sym^.name[j];
+                        inc(j);
+                      end;
+                  end;
+                undefsection[i]:=(s<>'') and (s[1]='.');
+                undefname[i]:=s;
+              end;
+            inc(i,1+sym^.aux);
+          end;
+        needed:=TCmdStrList.Create_no_double;
+        sec:=pointer(buf+sizeof(tcoffheader)+hdr^.opthdr);
+        for i:=0 to hdr^.nsects-1 do
+          begin
+            { a section with more than 65534 relocations stores the count in
+              an extra first entry; nothing the gc leaves behind is that big }
+            if sec^.nrelocs<>$ffff then
+              begin
+                rel:=prelentry(buf+sec^.relocpos);
+                keep:=rel;
+                nkept:=0;
+                dead:=false;
+                for j:=0 to sec^.nrelocs-1 do
+                  begin
+                    if rel^.typ<>0 then
+                      begin
+                        if rel^.sym<hdr^.syms then
+                          begin
+                            if undefsection[rel^.sym] then
+                              dead:=true
+                            else if copy(undefname[rel^.sym],1,6)='_$dll$' then
+                              needed.concat(undefname[rel^.sym]);
+                          end;
+                        keep^:=rel^;
+                        inc(keep);
+                        inc(nkept);
+                      end;
+                    inc(rel);
+                  end;
+                if dead then
+                  begin
+                    sec^.datasize:=0;
+                    sec^.nrelocs:=0;
+                    sec^.lineno2:=0;
+                  end
+                else
+                  sec^.nrelocs:=nkept;
+              end;
+            inc(sec);
+          end;
+        f:=CFileStreamClass.Create(fn,fmCreate);
+        result:=CStreamError=0;
+        if result then
+          f.Write(buf^,size);
+        f.Free;
+        freemem(buf);
+        if result and not needed.empty then
+          begin
+            extraobjects:=ChangeFileExt(fn,'')+'imp'+target_info.objext;
+            result:=WriteImportObject(extraobjects,needed);
+          end;
+        needed.free;
+      end;
+
+
+    { after the merge the object still carries one local symbol per input
+      section that a relocation refers to (`.rdata.n_.Ld1` from every unit,
+      the `.Lj` jump labels, ...), and units repeat those names: the FPC
+      linker keys the symbols of an object by name and would resolve them
+      all to one. Every relocation against a local symbol goes through the
+      symbol of its section instead, the offset moves into the data, and
+      the locals are then unreferenced and stripped. }
+    function TExternalLinkerWin.PostProcessMerged(const fn: TCmdStr): boolean;
+      type
+        tsymentry = packed record
+          name    : array[0..7] of char;
+          value   : longword;
+          section : smallint;
+          typ     : word;
+          storageclass : byte;
+          aux     : byte;
+        end;
+        psymentry = ^tsymentry;
+        trelentry = packed record
+          address : longword;
+          sym     : longword;
+          typ     : word;
+        end;
+        prelentry = ^trelentry;
+      const
+        IMAGE_SYM_CLASS_STATIC = 3;
+      var
+        f : TCCustomFileStream;
+        buf : pbyte;
+        size : longint;
+        hdr : ^tcoffheader;
+        sec : ^tcoffsechdr;
+        sym : psymentry;
+        rel : prelentry;
+        secsym : array of longint;
+        i,j,secn,fieldsize : longint;
+        p32 : plongword;
+        p64 : pqword;
+      begin
+        result:=false;
+        f:=CFileStreamClass.Create(fn,fmOpenRead);
+        if CStreamError<>0 then
+          begin
+            f.Free;
+            exit;
+          end;
+        size:=f.Size;
+        getmem(buf,size);
+        f.Read(buf^,size);
+        f.Free;
+        hdr:=pointer(buf);
+        { the section symbol: the first static symbol at offset 0 of a section }
+        setlength(secsym,hdr^.nsects+1);
+        for i:=0 to hdr^.nsects do
+          secsym[i]:=-1;
+        i:=0;
+        while i<hdr^.syms do
+          begin
+            sym:=psymentry(buf+hdr^.sympos+i*sizeof(tsymentry));
+            if (sym^.storageclass=IMAGE_SYM_CLASS_STATIC) and (sym^.value=0) and
+               (sym^.section>0) and (sym^.section<=hdr^.nsects) and (secsym[sym^.section]<0) then
+              secsym[sym^.section]:=i;
+            inc(i,1+sym^.aux);
+          end;
+        sec:=pointer(buf+sizeof(tcoffheader)+hdr^.opthdr);
+        for i:=0 to hdr^.nsects-1 do
+          begin
+            if sec^.nrelocs<>$ffff then
+              begin
+                rel:=prelentry(buf+sec^.relocpos);
+                for j:=0 to sec^.nrelocs-1 do
+                  begin
+                    { the relocation types whose field is a plain offset
+                      the symbol value can be folded into }
+                    case rel^.typ of
+{$ifdef x86_64}
+                      1:        { ADDR64 }
+                        fieldsize:=8;
+                      2..9,11:  { ADDR32, ADDR32NB, REL32, REL32_1..5, SECREL }
+                        fieldsize:=4;
+{$else}
+                      6,7,11,20: { DIR32, IMAGEBASE, SECREL32, PCRLONG }
+                        fieldsize:=4;
+{$endif}
+                      else
+                        fieldsize:=0;
+                    end;
+                    if (fieldsize<>0) and (rel^.sym<hdr^.syms) then
+                      begin
+                        sym:=psymentry(buf+hdr^.sympos+rel^.sym*sizeof(tsymentry));
+                        secn:=sym^.section;
+                        if (sym^.storageclass=IMAGE_SYM_CLASS_STATIC) and (secn>0) and (secn<=hdr^.nsects) and
+                           (secsym[secn]>=0) and (secsym[secn]<>longint(rel^.sym)) then
+                          begin
+                            if fieldsize=8 then
+                              begin
+                                p64:=pqword(buf+sec^.datapos+rel^.address);
+                                p64^:=p64^+sym^.value;
+                              end
+                            else
+                              begin
+                                p32:=plongword(buf+sec^.datapos+rel^.address);
+                                p32^:=p32^+sym^.value;
+                              end;
+                            rel^.sym:=secsym[secn];
+                          end;
+                      end;
+                    inc(rel);
+                  end;
+              end;
+            inc(sec);
+          end;
+        f:=CFileStreamClass.Create(fn,fmCreate);
+        result:=CStreamError=0;
+        if result then
+          f.Write(buf^,size);
+        f.Free;
+        freemem(buf);
+      end;
+
+
+    { one object with the import thunks and `.idata$2/4/5/6/7` entries for
+      the given mangled import names, laid out per DLL like the import
+      library members of TImportLibWin, but contiguous so that the host
+      linker does not have to order anything }
+    function TExternalLinkerWin.WriteImportObject(const fn: TCmdStr; needed: TCmdStrList): boolean;
+      const
+{$ifdef x86_64}
+        jmpopcode : array[0..1] of byte = (
+          $ff,$25             // jmp qword [rip + offset32]
+        );
+{$else}
+        jmpopcode : array[0..1] of byte = (
+          $ff,$25
+        );
+{$endif}
+        nopopcodes : array[0..1] of byte = (
+          $90,$90
+        );
+      var
+        writer : tobjectwriter;
+        output : TPECoffObjOutput;
+        objdata : TObjData;
+        textsec,idata2,idata4,idata5,idata6,idata7 : TObjSection;
+        idata4label,idata5label,idata6label,idata7label,implabel : TObjSymbol;
+        dlls : TCmdStrList;
+        dllitem,item : TCmdStrListItem;
+        imp : TStaticLibImport;
+        emptyint : longint;
+        labnr : longint;
+        ordint : dword;
+        absordnr : word;
+
+        procedure writetableentry;
+          begin
+            if imp.ordnr<=0 then
+              begin
+                objdata.writereloc(0,sizeof(longint),idata6label,RELOC_RVA);
+                if target_info.system in systems_peoptplus then
+                  objdata.writebytes(emptyint,sizeof(emptyint));
+              end
+            else
+              begin
+                ordint:=imp.ordnr;
+                if target_info.system in systems_peoptplus then
+                  begin
+                    objdata.writeUInt32LE(ordint);
+                    ordint:=$80000000;
+                    objdata.writeUInt32LE(ordint);
+                  end
+                else
+                  begin
+                    ordint:=ordint or $80000000;
+                    objdata.writeUInt32LE(ordint);
+                  end;
+              end;
+          end;
+
+      begin
+        result:=false;
+        emptyint:=0;
+        labnr:=0;
+        { the imports grouped by DLL, unknown names are reported }
+        dlls:=TCmdStrList.Create_no_double;
+        item:=TCmdStrListItem(needed.first);
+        while assigned(item) do
+          begin
+            imp:=TStaticLibImport(staticlibimports.Find(item.str));
+            if assigned(imp) then
+              dlls.concat(imp.dllname)
+            else
+              Message1(link_e_undefined_symbol,item.str);
+            item:=TCmdStrListItem(item.next);
+          end;
+        if ErrorCount<>0 then
+          begin
+            dlls.free;
+            exit;
+          end;
+        writer:=tobjectwriter.create;
+        output:=TPECoffObjOutput.create(writer);
+        objdata:=output.newObjData(fn);
+        output.startobjectfile(fn);
+        textsec:=objdata.createsection(sec_code,'');
+        idata2:=objdata.createsection(sec_idata2,'');
+        idata4:=objdata.createsection(sec_idata4,'');
+        idata5:=objdata.createsection(sec_idata5,'');
+        idata6:=objdata.createsection(sec_idata6,'');
+        idata7:=objdata.createsection(sec_idata7,'');
+        dllitem:=TCmdStrListItem(dlls.first);
+        while assigned(dllitem) do
+          begin
+            { descriptor of this DLL }
+            objdata.SetSection(idata4);
+            idata4label:=objdata.SymbolDefine('$imp$4$'+dllitem.str,AB_LOCAL,AT_DATA);
+            objdata.SetSection(idata5);
+            idata5label:=objdata.SymbolDefine('$imp$5$'+dllitem.str,AB_LOCAL,AT_DATA);
+            objdata.SetSection(idata7);
+            idata7label:=objdata.SymbolDefine('$imp$7$'+dllitem.str,AB_LOCAL,AT_DATA);
+            objdata.writebytes(dllitem.str[1],length(dllitem.str));
+            objdata.writebytes(emptyint,1);
+            objdata.SetSection(idata2);
+            objdata.writereloc(0,sizeof(longint),idata4label,RELOC_RVA);
+            objdata.writebytes(emptyint,sizeof(emptyint));
+            objdata.writebytes(emptyint,sizeof(emptyint));
+            objdata.writereloc(0,sizeof(longint),idata7label,RELOC_RVA);
+            objdata.writereloc(0,sizeof(longint),idata5label,RELOC_RVA);
+            { its imports }
+            item:=TCmdStrListItem(needed.first);
+            while assigned(item) do
+              begin
+                imp:=TStaticLibImport(staticlibimports.Find(item.str));
+                if imp.dllname=dllitem.str then
+                  begin
+                    inc(labnr);
+                    { idata6, hint and name }
+                    objdata.SetSection(idata6);
+                    idata6label:=objdata.SymbolDefine('$imp$6$'+tostr(labnr),AB_LOCAL,AT_DATA);
+                    absordnr:=abs(imp.ordnr);
+                    objdata.writeUInt16LE(absordnr);
+                    if imp.ordnr<=0 then
+                      objdata.writebytes(imp.symname[1],length(imp.symname));
+                    objdata.writebytes(emptyint,1);
+                    objdata.writebytes(emptyint,align(objdata.CurrObjSec.size,2)-objdata.CurrObjSec.size);
+                    { idata4, import lookup table }
+                    objdata.SetSection(idata4);
+                    writetableentry;
+                    { idata5, import address table }
+                    objdata.SetSection(idata5);
+                    if imp.isvar then
+                      implabel:=objdata.SymbolDefine(item.str,AB_GLOBAL,AT_DATA)
+                    else
+                      idata5label:=objdata.SymbolDefine('$imp$5e$'+tostr(labnr),AB_LOCAL,AT_DATA);
+                    writetableentry;
+                    { text, the thunk }
+                    if not imp.isvar then
+                      begin
+                        objdata.SetSection(textsec);
+                        implabel:=objdata.SymbolDefine(item.str,AB_GLOBAL,AT_FUNCTION);
+                        objdata.writebytes(jmpopcode,sizeof(jmpopcode));
+{$ifdef x86_64}
+                        objdata.writereloc(0,sizeof(longint),idata5label,RELOC_RELATIVE);
+{$else}
+                        objdata.writereloc(0,sizeof(longint),idata5label,RELOC_ABSOLUTE32);
+{$endif}
+                        objdata.writebytes(nopopcodes,align(objdata.CurrObjSec.size,qword(sizeof(nopopcodes)))-objdata.CurrObjSec.size);
+                      end;
+                    output.exportsymbol(implabel);
+                  end;
+                item:=TCmdStrListItem(item.next);
+              end;
+            { terminators of the lookup and address tables }
+            objdata.SetSection(idata4);
+            objdata.writebytes(emptyint,sizeof(emptyint));
+            if target_info.system in systems_peoptplus then
+              objdata.writebytes(emptyint,sizeof(emptyint));
+            objdata.SetSection(idata5);
+            objdata.writebytes(emptyint,sizeof(emptyint));
+            if target_info.system in systems_peoptplus then
+              objdata.writebytes(emptyint,sizeof(emptyint));
+            dllitem:=TCmdStrListItem(dllitem.next);
+          end;
+        { the writer reports through ErrorCount, its result means nothing }
+        output.writeobjectfile(objdata);
+        result:=ErrorCount=0;
+        objdata.free;
+        output.free;
+        writer.free;
+        dlls.free;
       end;
 
 

@@ -281,13 +281,16 @@ implementation
                           (tprocdef(tprocsym(srsym).procdeflist[0]).aliasnames.count>1) then
                          begin
                            exportallprocsymnames(tprocsym(srsym),options);
-                           { the aliases are real symbols already, keep them global }
+                           { the aliases are real symbols already, keep them
+                             global; the mangled name itself stays hidden }
                            if cs_link_staticlib in current_settings.globalswitches then
                              begin
-                               aliasitem:=TCmdStrListItem(tprocdef(tprocsym(srsym).procdeflist[0]).aliasnames.first);
+                               pd:=tprocdef(tprocsym(srsym).procdeflist[0]);
+                               aliasitem:=TCmdStrListItem(pd.aliasnames.first);
                                while assigned(aliasitem) do
                                  begin
-                                   current_module.staticlibexports.concat(aliasitem.str);
+                                   if aliasitem.str<>pd.mangledname then
+                                     current_module.staticlibexports.concat(aliasitem.str);
                                    aliasitem:=TCmdStrListItem(aliasitem.next);
                                  end;
                              end;
