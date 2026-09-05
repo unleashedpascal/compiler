@@ -140,4 +140,12 @@ unit sysinit;
       DLL_Entry(SysInitEntryInformation);
     end;
 
+
+    { for rtlInit, which runs without any of the entry points above }
+    function SysInitEntryInfo: PEntryInformation; public name 'FPC_SysInitEntryInfo';
+    begin
+      SetupEntryInformation;
+      SysInitEntryInfo:=@SysInitEntryInformation;
+    end;
+
 end.

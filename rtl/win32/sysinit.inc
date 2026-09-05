@@ -88,6 +88,14 @@
         SysInitEntryInformation.valgrind_used:=valgrind_used;
       end;
 
+
+    { for rtlInit, which runs without any of the entry points of this unit }
+    function SysInitEntryInfo: PEntryInformation; public name 'FPC_SysInitEntryInfo';
+    begin
+      SetupEntryInformation;
+      SysInitEntryInfo:=@SysInitEntryInformation;
+    end;
+
 {$define FPC_INSSIDE_SYSINIT}
 {$include systlsdir.inc}
 

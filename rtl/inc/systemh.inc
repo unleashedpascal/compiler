@@ -732,6 +732,7 @@ type
     OS : TEntryInformationOS;
     {$endif HAS_ENTRYINFORMATION_OS}
   end;
+  PEntryInformation = ^TEntryInformation;
 
 
 const
@@ -1699,6 +1700,19 @@ Procedure Halt(errnum:TExitCode);noreturn;
 Procedure AddExitProc(Proc:TProcedure);
 {$endif FPC_HAS_FEATURE_HEAP}
 Procedure Halt;{$ifdef SYSTEMINLINE}inline;{$endif}noreturn;
+
+{ runtime start and shutdown for code that runs without the startup code:
+  a static library (`-XA`) or a program with its own `$entrypoint`.
+  rtlInit sets the runtime up, runs every unit initialization and the body
+  of a library; rtlDone runs the finalizations and releases the runtime.
+  Both are reference counted, the first rtlInit and the last rtlDone do
+  the work, and init/done cycles are allowed. }
+procedure rtlInit; cdecl;
+procedure rtlDone; cdecl;
+{ a thread manager installs this to arrange the cleanup of a thread the
+  host program created, called once such a thread got its runtime state }
+var
+  StaticLibThreadAttach : procedure = nil;
 
 { Need to be exported for threads unit }
 {$ifdef FPC_HAS_FEATURE_EXCEPTIONS}

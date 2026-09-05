@@ -101,6 +101,9 @@ procedure OsSetupEntryInformation(constref info: TEntryInformation); forward;
 
 {$define HAS_GETCPUCOUNT}
 
+{ rtlInit/rtlDone are implemented below }
+{$define FPC_SYSTEM_HAS_STATICLIB}
+
 {$I system.inc}
 
 {$ifdef android}
@@ -609,6 +612,66 @@ var
   oldsigsegv: SigActionRec; public name '_FPC_OLDSIGSEGV';
   oldsigbus: SigActionRec; public name '_FPC_OLDSIGBUS';
   oldsigill: SigActionRec; public name '_FPC_OLDSIGILL';
+
+{*****************************************************************************
+                    Runtime start and shutdown without startup code
+*****************************************************************************}
+
+{$ifdef FPC_HAS_INDIRECT_ENTRY_INFORMATION}
+{ the entry information of sysinit, which is not run }
+function SysInitEntryInfo: PEntryInformation; external name 'FPC_SysInitEntryInfo';
+{$endif FPC_HAS_INDIRECT_ENTRY_INFORMATION}
+
+procedure StaticLibThreadInit;
+begin
+  { threadvars are TLS the C library of the host set up, the rest of the
+    thread state is what a BeginThread thread gets; its stack size is
+    unknown }
+  InitThread(1000000000);
+  StaticLibThreadReady:=true;
+  if assigned(StaticLibThreadAttach) then
+    StaticLibThreadAttach();
+end;
+
+{ what the shared library startup does, minus InitTLS: the C library of
+  the host owns the thread pointer. Command line and environment are not
+  available, the stack is taken from the calling frame. }
+procedure rtlInit; cdecl; [public,alias:'FPC_RTLINIT'];
+{$ifdef FPC_HAS_INDIRECT_ENTRY_INFORMATION}
+var
+  info : PEntryInformation;
+{$endif FPC_HAS_INDIRECT_ENTRY_INFORMATION}
+begin
+  if not StaticLibBeginInit then
+    exit;
+{$ifdef FPC_HAS_INDIRECT_ENTRY_INFORMATION}
+  info:=SysInitEntryInfo;
+  info^.OS.stkptr:=get_frame;
+  SetupEntryInformation(info^);
+{$else FPC_HAS_INDIRECT_ENTRY_INFORMATION}
+  initialstkptr:=get_frame;
+{$endif FPC_HAS_INDIRECT_ENTRY_INFORMATION}
+  IsLibrary:=true;
+  ModuleIsLib:=true;
+  // units initialize single-threaded as in a program, else `unix` takes its
+  // lock before cthreads is up; an earlier init/done cycle left the flag set
+  IsMultiThread:=false;
+  internal_initializeunits;
+  // what the first BeginThread of a program does, once a thread driver is up
+  if assigned(StaticLibThreadAttach) then
+    LazyInitThreading;
+  IsMultiThread:=true;
+  StaticLibThreadReady:=true;
+end;
+
+procedure rtlDone; cdecl; [public,alias:'FPC_RTLDONE'];
+begin
+  if not StaticLibEndDone then
+    exit;
+  InternalExit;
+  StaticLibThreadReady:=false;
+end;
+
 
 Procedure InstallSignals;
 begin
