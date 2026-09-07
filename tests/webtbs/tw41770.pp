@@ -59,4 +59,5 @@ begin
     Item.Free;
     Box.Free;
   end;
+  writeln('ok');
 end.
