@@ -310,9 +310,9 @@ implementation
       begin
         if maybe_push_unused_para then
           exit;
-        { allow passing of a constant to a const or constref formaldef: both
-          promise the callee an address, so a non-reference actual (a call
-          result, a folded constant) is materialized once for the call }
+        { Both const and constref formaldefs promise the callee an address.
+          Materialize an accepted non-reference actual, such as a function
+          result, once for the call. Existing references keep their identity. }
         if (parasym.varspez in [vs_const,vs_constref]) and
            not(left.location.loc in [LOC_CREFERENCE,LOC_REFERENCE]) then
           hlcg.location_force_mem(current_asmdata.CurrAsmList,left.location,left.resultdef);

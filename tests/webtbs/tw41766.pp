@@ -16,12 +16,12 @@ end;
 
 var
   Data: array[Byte] of Byte;
+  Expected: UInt32;
 
 begin
-  Data[0] := $78;
-  Data[1] := $56;
-  Data[2] := $34;
-  Data[3] := $12;
-  if FirstByteAsDWord(Data) <> $12345678 then
+  Expected := $12345678;
+  Move(Expected, Data, SizeOf(Expected));
+  if FirstByteAsDWord(Data) <> Expected then
     Halt(1);
+  writeln('ok');
 end.
