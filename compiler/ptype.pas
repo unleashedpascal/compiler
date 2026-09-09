@@ -911,6 +911,7 @@ implementation
         srsym : tsym;
         srsymtable : tsymtable;
         buf : tdynamicarray;
+        istype : boolean;
       begin
         def:=nil;
         case current_scanner.token of
@@ -921,13 +922,11 @@ implementation
             end;
           _ID:
             { searchsym_type also returns consts and vars, so check the symbol
-              really names a type before committing to the tuple path }
-            if searchsym_type(current_scanner.pattern,srsym,srsymtable) and
-               (srsym.typ in [typesym,unitsym,namespacesym]) then
-              begin
-                def:=positional_tuple_type;
-                exit(true);
-              end;
+              really names a type before committing to the tuple path. a type
+              name may still be a field name (`(text: string; n: integer)`),
+              so the `name [, name]:` peek below decides for it too }
+            istype:=searchsym_type(current_scanner.pattern,srsym,srsymtable) and
+               (srsym.typ in [typesym,unitsym,namespacesym]);
           else
             exit(false);
         end;
@@ -938,7 +937,10 @@ implementation
           named parser surface a clear error if we guessed wrong. }
         if current_scanner.is_recording_tokens then
           begin
-            def:=named_tuple_type;
+            if istype then
+              def:=positional_tuple_type
+            else
+              def:=named_tuple_type;
             exit(true);
           end;
 
@@ -961,9 +963,16 @@ implementation
           end
         else
           begin
-            { not a tuple - replay and fall through to enum parsing }
+            { not a named tuple - replay; a type name starts a positional
+              tuple, anything else falls through to enum parsing }
             current_scanner.startreplaytokens(buf,false);
-            result:=false;
+            if istype then
+              begin
+                def:=positional_tuple_type;
+                result:=true;
+              end
+            else
+              result:=false;
           end;
       end;
 
