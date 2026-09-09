@@ -54,6 +54,16 @@ var x := 200;         // LongInt
 var by := Byte(200);  // Byte
 ```
 
+Only a char **literal** is promoted. A char-typed expression already has a definite type and keeps it: a string index, a `Char` variable, `Chr()`, a function returning `Char` all infer `Char`, so set tests and `case` work on the inferred variable:
+
+```pascal
+var s := 'abc1';
+var c := 'a';         // AnsiString
+var d := s[1];        // Char
+var e := Chr(65);     // Char
+if d in ['a'..'z'] then writeln('letter');
+```
+
 ### Array literal inference
 
 A bare `[...]` on the right of an inferred `var` builds a **dynamic array** (`array of T`). `T` is decided by the **first element**:

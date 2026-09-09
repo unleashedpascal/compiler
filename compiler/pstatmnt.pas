@@ -4315,7 +4315,7 @@ implementation
                     Single char literals are also promoted to string so
                     that var s := 'x' behaves consistently with var s := 'xx'. }
                   if is_conststring_array(hdef) or
-                     (not(nf_explicit in initexpr.flags) and is_char(hdef)) then
+                     (not(nf_explicit in initexpr.flags) and (initexpr.nodetype=ordconstn) and is_char(hdef)) then
                     begin
                       if m_default_unicodestring in current_settings.modeswitches then
                         hdef := cunicodestringtype
@@ -4619,10 +4619,10 @@ implementation
                   exit;
                 end;
               hdef := initexpr.resultdef;
-              { same inference rules as inline var: char promotes to default
+              { same inference rules as inline var: char literal promotes to default
                 string type, sub-32-bit integers promote to LongInt }
               if is_conststring_array(hdef) or
-                 (not(nf_explicit in initexpr.flags) and is_char(hdef)) then
+                 (not(nf_explicit in initexpr.flags) and (initexpr.nodetype=ordconstn) and is_char(hdef)) then
                 begin
                   if m_default_unicodestring in current_settings.modeswitches then
                     hdef := cunicodestringtype
