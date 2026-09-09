@@ -2736,6 +2736,59 @@ implementation
       end;
 
 
+    { peeks whether `(` starts a `(field: value; ...)` record aggregate;
+      a named tuple literal `(field: value, ...)` and any other `(...)` are
+      expressions (a tuple literal converts to the record itself). the
+      separator after the first value decides. without a peek, assume
+      aggregate }
+    function record_aggregate_ahead : boolean;
+      var
+        buf : tdynamicarray;
+        depth : longint;
+      begin
+        if current_scanner.is_recording_tokens then
+          exit(true);
+        buf:=tdynamicarray.create(64);
+        current_scanner.startrecordtokens(buf);
+        consume(_LKLAMMER);
+        result:=current_scanner.token=_ID;
+        if result then
+          begin
+            consume(_ID);
+            result:=current_scanner.token=_COLON;
+          end;
+        if result then
+          begin
+            depth:=0;
+            repeat
+              case current_scanner.token of
+                _LKLAMMER,_LECKKLAMMER:
+                  inc(depth);
+                _RKLAMMER,_RECKKLAMMER:
+                  begin
+                    if depth=0 then
+                      break;
+                    dec(depth);
+                  end;
+                _COMMA:
+                  if depth=0 then
+                    begin
+                      result:=false;
+                      break;
+                    end;
+                _SEMICOLON,_EOF:
+                  break;
+                else
+                  ;
+              end;
+              consume(current_scanner.token);
+            until false;
+          end;
+        current_scanner.stoprecordtokens;
+        current_scanner.startreplaytokens(buf,false);
+      end;
+
+
     function _with_statement(seensyms : TFPList;seenfields : TFPHashList;shadowcands : TFPObjectList) : tnode;
 
       var
@@ -2865,7 +2918,8 @@ implementation
                            then copy it into the with-var. The plain
                            expression parser cannot handle (a, b, c) form. }
                          else if (current_scanner.token = _LKLAMMER) and
-                                 ((hdef.typ = arraydef) or (hdef.typ = recorddef)) then
+                                 ((hdef.typ = arraydef) or
+                                  ((hdef.typ = recorddef) and record_aggregate_ahead)) then
                            begin
                              { suffix with line number so multiple sibling
                                `with var NAME : TYPE := (...)` in the same
@@ -4225,7 +4279,8 @@ implementation
                     expression parser cannot handle (a, b, c) notation. }
                   if (sc.count = 1) and
                      (current_scanner.token = _LKLAMMER) and
-                     ((hdef.typ = arraydef) or (hdef.typ = recorddef)) then
+                     ((hdef.typ = arraydef) or
+                      ((hdef.typ = recorddef) and record_aggregate_ahead)) then
                     begin
                       tcsym := cstaticvarsym.create('$inlinetc_'+tsym(sc[0]).realname,
                                                     vs_const, hdef, []);
