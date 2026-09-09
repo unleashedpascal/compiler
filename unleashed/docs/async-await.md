@@ -164,11 +164,12 @@ Delivery is exactly once: after the first `await` re-raises, a later `await` on 
 
 ## Targets of the call form
 
-Accepted: ordinary routines, methods of any visibility including strict private, overloaded routines, generic specializations (`async twoOf<integer>(21)`), and procvar calls (`async pv()` - the procvar value is snapshotted; later reassignment does not affect the spawned work).
+Accepted: ordinary routines, methods of any visibility including strict private, overloaded routines, generic specializations (`async twoOf<integer>(21)`), and procvar calls (`async pv()` - the procvar value is snapshotted; later reassignment does not affect the spawned work). An open array parameter (`array of T`) takes a dynamic array, a static array or an array literal; the array itself is snapshotted and the worker's call converts it again.
 
 Rejected, with dedicated errors:
 
 - **`var` / `out` arguments** - `` `async` cannot pass a `var` or `out` argument - the snapshot would drop the worker's writes ``. Use the block form or return the value through the future.
+- **An open array parameter passed on** - `` `async` cannot pass an open array parameter on; pass a dynamic or static array ``. Inside a routine with `xs: array of T`, `async f(xs)` has no array of its own to snapshot; declare the parameter as a dynamic array or copy it first.
 - **Nested routines** - `` `async` cannot run a nested routine - it needs the enclosing frame, which may be gone before the worker runs ``. Move the work to a top-level routine.
 
 ## Compile-time checks

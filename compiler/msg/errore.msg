@@ -498,7 +498,7 @@ scan_e_improperly_indented_multiline_string=02120_E_Incorrectly indented multi-l
 #
 # Parser
 #
-# 03454 is the last used one
+# 03455 is the last used one
 #
 % \section{Parser messages}
 % This section lists all parser messages. The parser takes care of the
@@ -2023,6 +2023,10 @@ parser_w_outvar_open_array=03454_W_Out-variable bound to an open array parameter
 % already has, so a fresh \var{var x} there is an empty dynamic array of the
 % element type and stays empty after the call. Give the parameter a dynamic
 % array type when the callee is meant to fill it.
+parser_e_async_no_open_array_param=03455_E_`async` cannot pass an open array parameter on; pass a dynamic or static array
+% An open array parameter only views the caller's array, so the snapshot
+% taken for the worker thread has nothing to copy. Pass the array itself,
+% or declare the parameter as a dynamic array.
 %
 % \end{description}
 %

@@ -190,6 +190,32 @@ implementation
     end;
 
 
+  { the node an async call snapshots for an argument. an open array
+    parameter takes a dynamic array through an address/deref pair and an
+    array literal through a conversion to a constant open array; neither
+    wrapper has a value of its own, so the array behind it is copied and
+    the rebuilt call converts it again. detach unlinks it from the wrapper }
+  function async_snapshot_arg(arg:tnode;detach:boolean):tnode;
+    var
+      wrapper : tnode;
+    begin
+      result:=arg;
+      wrapper:=nil;
+      if (arg.nodetype=derefn) and is_dynamic_array(arg.resultdef) and
+         (tderefnode(arg).left.nodetype=typeconvn) then
+        wrapper:=tderefnode(arg).left
+      else if (arg.nodetype=typeconvn) and
+         (ttypeconvnode(arg).left.nodetype=arrayconstructorn) then
+        wrapper:=arg;
+      if assigned(wrapper) then
+        begin
+          result:=ttypeconvnode(wrapper).left;
+          if detach then
+            ttypeconvnode(wrapper).left:=nil;
+        end;
+    end;
+
+
   function resolve_async_future(left:tnode;isblock:boolean):tdef;
     var
       refslocal : boolean;
@@ -247,6 +273,15 @@ implementation
                  (cpn.parasym.varspez in [vs_var,vs_out]) then
                 begin
                   MessagePos(cpn.fileinfo,parser_e_async_no_var_param);
+                  result:=generrordef;
+                  exit;
+                end;
+              { an open array has no value of its own to snapshot; only a
+                real array (see async_snapshot_arg) can be passed for it }
+              if assigned(cpn.parasym) and is_open_array(cpn.parasym.vardef) and
+                 is_open_array(async_snapshot_arg(cpn.left,false).resultdef) then
+                begin
+                  MessagePos(cpn.fileinfo,parser_e_async_no_open_array_param);
                   result:=generrordef;
                   exit;
                 end;
@@ -491,7 +526,9 @@ implementation
       ismethod,
       isprocvar,
       isinline : boolean;
-      inlinework : tnode;
+      inlinework,
+      argnode : tnode;
+      argdef : tdef;
       argnodes,
       argdefs,
       argfields,
@@ -652,8 +689,19 @@ implementation
                 buffer); the rebuilt call regenerates them at its own firstpass }
               if not (assigned(cpn.parasym) and (vo_is_hidden_para in cpn.parasym.varoptions)) then
                 begin
-                  argnodes.add(cpn.left);
-                  argdefs.add(cpn.left.resultdef);
+                  argnode:=async_snapshot_arg(cpn.left,true);
+                  argnodes.add(argnode);
+                  { an array literal is stored as a dynamic array of the
+                    parameter's element type }
+                  if argnode.nodetype=arrayconstructorn then
+                    begin
+                      argdef:=carraydef.create(0,-1,ptruinttype);
+                      tarraydef(argdef).arrayoptions:=tarraydef(argdef).arrayoptions+[ado_IsDynamicArray];
+                      tarraydef(argdef).elementdef:=tarraydef(cpn.parasym.vardef).elementdef;
+                      argdefs.add(argdef);
+                    end
+                  else
+                    argdefs.add(argnode.resultdef);
                   cpn.left:=nil;
                 end;
               cpn:=tcallparanode(cpn.right);
