@@ -4102,6 +4102,8 @@ implementation
         statements     : tstatementnode;
         tempnode        : ttempcreatenode;
         tcsym          : tstaticvarsym;
+        declpos,
+        storepos       : tfileposinfo;
         { destructuring state }
         names : array of string;
         namecount : longint;
@@ -4159,6 +4161,10 @@ implementation
             until not try_to_consume(_COMMA);
             consume(_RKLAMMER);
             consume(_ASSIGNMENT);
+            { the names get their syms after the initializer is parsed; a
+              specialization in it leaves the token position inside the
+              generic, so keep the declaration's own position for them }
+            declpos := current_tokenpos;
             initexpr := expr(true);
             do_typecheckpass(initexpr);
             if not assigned(initexpr.resultdef) or
@@ -4169,6 +4175,8 @@ implementation
                 result := cerrornode.create;
                 exit;
               end;
+            storepos := current_tokenpos;
+            current_tokenpos := declpos;
             recdef := trecorddef(initexpr.resultdef);
             fieldcount := 0;
             setlength(fieldsyms, recdef.symtable.symlist.count);
@@ -4211,6 +4219,7 @@ implementation
                     csubscriptnode.create(fieldsyms[j], ctemprefnode.create(tempnode))));
               end;
             addstatement(laststmt, ctempdeletenode.create_normal_temp(tempnode));
+            current_tokenpos := storepos;
             result := blk;
             exit;
           end;
