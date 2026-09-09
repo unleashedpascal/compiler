@@ -48,6 +48,10 @@ function get_future_intf_def(elemdef:tdef):tobjectdef;
   (used to convert an `async begin..end` block into a captured funcref) }
 function async_block_funcref(pd:tprocdef):tobjectdef;
 
+{ the function-reference interface matching an anonymous routine's
+  signature; the same one the capturer binds the routine to }
+function anon_proc_funcref(pd:tprocdef):tobjectdef;
+
 { rewrites `async`/`await` nodes in a routine body into the future-impl factory
   call and the `__Await` method call; no-op for routines without them }
 procedure lower_async(pi:tprocinfo);
@@ -1390,6 +1394,12 @@ implementation
 
 
   function async_block_funcref(pd:tprocdef):tobjectdef;
+    begin
+      result:=funcref_intf_for_proc(pd,fileinfo_to_suffix(pd.fileinfo));
+    end;
+
+
+  function anon_proc_funcref(pd:tprocdef):tobjectdef;
     begin
       result:=funcref_intf_for_proc(pd,fileinfo_to_suffix(pd.fileinfo));
     end;

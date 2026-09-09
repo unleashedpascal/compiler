@@ -54,6 +54,13 @@ var x := 200;         // LongInt
 var by := Byte(200);  // Byte
 ```
 
+An anonymous function or procedure infers the function reference type with its own signature, so the variable can be called, passed to a `reference to` parameter and captures the surrounding locals like a declared `reference to` variable:
+
+```pascal
+var twice := function(x: integer): integer begin result := x * 2; end;
+writeln(twice(21)); // 42
+```
+
 Only a char **literal** is promoted. A char-typed expression already has a definite type and keeps it: a string index, a `Char` variable, `Chr()`, a function returning `Char` all infer `Char`, so set tests and `case` work on the inferred variable:
 
 ```pascal

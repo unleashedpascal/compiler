@@ -4258,7 +4258,11 @@ implementation
                       if current_scanner.replay_stack_depth=0 then
                         hdef.register_def;
                     end;
-                end;
+                end
+              // a plain anonymous procvar type needs its calling convention
+              // like in a var section, or its parameters stay unusable
+              else if (hdef.typ=procvardef) and (hdef.typesym=nil) then
+                handle_calling_convention(tprocvardef(hdef),hcc_default_actions_intf);
               for i := 0 to sc.count - 1 do
                 begin
                   tabstractnormalvarsym(sc[i]).vardef := hdef;
@@ -4294,7 +4298,15 @@ implementation
                         cloadnode.create(tcsym, tcsym.owner));
                       exit;
                     end;
+                  { a procvar / function reference target lets a bare
+                    routine name load its address, like `:=` does }
+                  if hdef.typ=procvardef then
+                    getprocvardef:=tprocvardef(hdef)
+                  else if is_invokable(hdef) then
+                    getfuncrefdef:=tobjectdef(hdef);
                   initexpr := expr(true);
+                  getprocvardef:=nil;
+                  getfuncrefdef:=nil;
                   if sc.count = 1 then
                     begin
                       tabstractnormalvarsym(sc[0]).varstate := vs_initialised;
@@ -4394,6 +4406,10 @@ implementation
                     so that comparisons and assignments behave as expected.
                     Single char literals are also promoted to string so
                     that var s := 'x' behaves consistently with var s := 'xx'. }
+                  { an anonymous function infers the function reference
+                    type with its signature }
+                  if (hdef.typ=procdef) and (po_anonymous in tprocdef(hdef).procoptions) then
+                    hdef := anon_proc_funcref(tprocdef(hdef));
                   if is_conststring_array(hdef) or
                      (not(nf_explicit in initexpr.flags) and (initexpr.nodetype=ordconstn) and is_char(hdef)) then
                     begin
