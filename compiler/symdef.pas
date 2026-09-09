@@ -181,6 +181,9 @@ interface
           function is_generic:boolean;
           { same as above for specializations }
           function is_specialization:boolean;
+          { true if this def still contains generic parameters that require
+            specialization }
+          function has_generic_paras:boolean;
           { generic utilities }
           function is_generic_param_const(index:integer):boolean;inline;
           function get_generic_param_def(index:integer):tdef;inline;
@@ -2759,6 +2762,23 @@ implementation
              end;
            result:=false;
          end;
+     end;
+
+
+   function tstoreddef.has_generic_paras: boolean;
+     var
+       i: longint;
+       sym: tsym;
+     begin
+       result:=false;
+       if assigned(genericparas) then
+         for i:=0 to genericparas.count-1 do
+           begin
+             sym:=tsym(genericparas[i]);
+             if ((sym.typ=symconst.typesym) and (sp_generic_para in sym.symoptions)) or
+                ((sym.typ=symconst.constsym) and not (sp_generic_const in sym.symoptions)) then
+               exit(true);
+           end;
      end;
 
 
