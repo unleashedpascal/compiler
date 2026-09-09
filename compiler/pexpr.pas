@@ -5740,7 +5740,8 @@ implementation
                  if is_integer(elemdef) and
                     (torddef(elemdef).ordtype in [s8bit,u8bit,s16bit,u16bit]) then
                    elemdef:=s32inttype
-                 else if is_conststring_array(elemdef) or is_char(elemdef) then
+                 else if is_conststring_array(elemdef) or
+                    (is_char(elemdef) and (exprs[i].nodetype=ordconstn) and not(nf_explicit in exprs[i].flags)) then
                    begin
                      if m_default_unicodestring in current_settings.modeswitches then
                        elemdef:=cunicodestringtype
@@ -5816,7 +5817,8 @@ implementation
                if is_integer(elemdef) and
                   (torddef(elemdef).ordtype in [s8bit,u8bit,s16bit,u16bit]) then
                  elemdef:=s32inttype
-               else if is_conststring_array(elemdef) or is_char(elemdef) then
+               else if is_conststring_array(elemdef) or
+                  (is_char(elemdef) and (exprs[i].nodetype=ordconstn) and not(nf_explicit in exprs[i].flags)) then
                  begin
                    if m_default_unicodestring in current_settings.modeswitches then
                      elemdef:=cunicodestringtype

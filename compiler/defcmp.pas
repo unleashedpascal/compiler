@@ -110,7 +110,8 @@ interface
           tc_arrayconstructor_2_dynarray,
           tc_arrayconstructor_2_array,
           tc_anonproc_2_funcref,
-          tc_procvar_2_funcref
+          tc_procvar_2_funcref,
+          tc_tuple_2_tuple
        );
 
     function compare_defs_ext(def_from,def_to : tdef;
@@ -270,6 +271,37 @@ implementation
       end;
 
 
+    { like tuples_have_equal_shape, but a field only has to be assignment
+      compatible with its counterpart, so ('A', 1.5) fits (string, double) }
+    function tuples_have_convertible_shape(a,b:trecorddef):boolean;
+      var
+        lista,listb : tfphashobjectlist;
+        i : longint;
+        fa,fb : tfieldvarsym;
+        ignore_names : boolean;
+      begin
+        result:=false;
+        lista:=a.symtable.symlist;
+        listb:=b.symtable.symlist;
+        if lista.count<>listb.count then
+          exit;
+        ignore_names:=is_positional_tuple(a) or is_positional_tuple(b);
+        for i:=0 to lista.count-1 do
+          begin
+            if (tsym(lista[i]).typ<>fieldvarsym) or
+               (tsym(listb[i]).typ<>fieldvarsym) then
+              exit;
+            fa:=tfieldvarsym(lista[i]);
+            fb:=tfieldvarsym(listb[i]);
+            if (not ignore_names) and (fa.name<>fb.name) then
+              exit;
+            if compare_defs(fa.vardef,fb.vardef,nothingn)<te_convert_l6 then
+              exit;
+          end;
+        result:=true;
+      end;
+
+
     function compare_defs_ext(def_from,def_to : tdef;
                               fromtreetype : tnodetype;
                               var doconv : tconverttype;
@@ -377,6 +409,18 @@ implementation
           begin
             doconv:=tc_equal;
             compare_defs_ext:=te_exact;
+            exit;
+          end;
+
+         { a tuple whose fields merely need a value conversion is converted
+           field by field into a temp of the target type }
+         if (def_from.typ=recorddef) and
+            (def_to.typ=recorddef) and
+            (df_tuple in def_from.defoptions) and
+            tuples_have_convertible_shape(trecorddef(def_from),trecorddef(def_to)) then
+          begin
+            doconv:=tc_tuple_2_tuple;
+            compare_defs_ext:=te_convert_l2;
             exit;
           end;
 

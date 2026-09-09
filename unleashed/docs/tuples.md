@@ -132,6 +132,17 @@ pairs := [(1, 2), (3, 4), (5, 6)];
 
 Tuple literals inside an array literal build the declared element type automatically; sub-32-bit integer literals and constant strings promote to `Int32` / the mode's default string type to match the typical declarations.
 
+A literal whose fields do not match the declared element type exactly still fits when every field is assignment compatible with its counterpart: the tuple is copied field by field, each field with its ordinary conversion. So `1.5` (a `Single` literal) lands in a `Double` field and `1` (an `Int32` literal) in an `Int64` or `Byte` field. The same conversion applies wherever a tuple value meets a differently typed tuple: assignment, a parameter, a function result, an element store.
+
+```pascal
+var quotes: array of (sym: string; lo: double);
+quotes += [('A', 1.5)];   // (string, single) literal into (string, double)
+var q := ('B', 2.5);      // q: (string, single)
+quotes += [q];            // converted the same way
+```
+
+A one-character literal inside a tuple literal is a string, not a `Char`, so a `Char` field needs an explicit `Char('x')` or a typed variable.
+
 ## Nested tuples
 
 ```pascal

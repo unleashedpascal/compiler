@@ -122,6 +122,7 @@ interface
           function typecheck_arrayconstructor_to_array : tnode; virtual;
           function typecheck_anonproc_2_funcref : tnode; virtual;
           function typecheck_procvar_2_funcref : tnode; virtual;
+          function typecheck_tuple_2_tuple : tnode; virtual;
        private
           function _typecheck_int_to_int : tnode;
           function _typecheck_cord_to_pointer : tnode;
@@ -157,6 +158,7 @@ interface
           function _typecheck_arrayconstructor_to_array : tnode;
           function _typecheck_anonproc_to_funcref : tnode;
           function _typecheck_procvar_to_funcref : tnode;
+          function _typecheck_tuple_to_tuple : tnode;
        protected
           function first_int_to_int : tnode;virtual;
           function first_cstring_to_pchar : tnode;virtual;
@@ -2575,6 +2577,12 @@ implementation
       end;
 
 
+    function ttypeconvnode._typecheck_tuple_to_tuple : tnode;
+      begin
+        result:=typecheck_tuple_2_tuple;
+      end;
+
+
     function ttypeconvnode._typecheck_anonproc_to_funcref : tnode;
       begin
         result:=typecheck_anonproc_2_funcref;
@@ -2946,6 +2954,43 @@ implementation
       end;
 
 
+    { copies the tuple field by field into a temp of the target type; each
+      assignment inserts the ordinary conversion for its field }
+    function ttypeconvnode.typecheck_tuple_2_tuple : tnode;
+      var
+        stmt : tstatementnode;
+        srctemp,dsttemp : ttempcreatenode;
+        srcdef,dstdef : trecorddef;
+        i : longint;
+        srcsym,dstsym : tsym;
+      begin
+        srcdef:=trecorddef(left.resultdef);
+        dstdef:=trecorddef(resultdef);
+        result:=internalstatements(stmt);
+        srctemp:=ctempcreatenode.create(srcdef,srcdef.size,tt_persistent,true);
+        addstatement(stmt,srctemp);
+        addstatement(stmt,cassignmentnode.create(ctemprefnode.create(srctemp),left));
+        left:=nil;
+        dsttemp:=ctempcreatenode.create(dstdef,dstdef.size,tt_persistent,true);
+        addstatement(stmt,dsttemp);
+        { fields line up by index, checked by tuples_have_convertible_shape }
+        for i:=0 to srcdef.symtable.symlist.count-1 do
+          begin
+            srcsym:=tsym(srcdef.symtable.symlist[i]);
+            dstsym:=tsym(dstdef.symtable.symlist[i]);
+            if srcsym.typ<>fieldvarsym then
+              continue;
+            addstatement(stmt,
+              cassignmentnode.create(
+                csubscriptnode.create(tfieldvarsym(dstsym),ctemprefnode.create(dsttemp)),
+                csubscriptnode.create(tfieldvarsym(srcsym),ctemprefnode.create(srctemp))));
+          end;
+        addstatement(stmt,ctempdeletenode.create(srctemp));
+        addstatement(stmt,ctempdeletenode.create_normal_temp(dsttemp));
+        addstatement(stmt,ctemprefnode.create(dsttemp));
+      end;
+
+
     function ttypeconvnode.typecheck_anonproc_2_funcref : tnode;
       var
         capturer : tsym;
@@ -3017,7 +3062,8 @@ implementation
           { arrayconstructor_2_dynarray } @ttypeconvnode._typecheck_arrayconstructor_to_dynarray,
           { arrayconstructor_2_array } @ttypeconvnode._typecheck_arrayconstructor_to_array,
           { anonproc_2_funcref } @ttypeconvnode._typecheck_anonproc_to_funcref,
-          { procvar_2_funcref } @ttypeconvnode._typecheck_procvar_to_funcref
+          { procvar_2_funcref } @ttypeconvnode._typecheck_procvar_to_funcref,
+          { tuple_2_tuple } @ttypeconvnode._typecheck_tuple_to_tuple
          );
       type
          tprocedureofobject = function : tnode of object;
@@ -4879,7 +4925,8 @@ implementation
            @ttypeconvnode._first_nothing,
            @ttypeconvnode._first_nothing,
            nil,
-           nil
+           nil,
+           nil { removed in typecheck_tuple_2_tuple }
          );
       type
          tprocedureofobject = function : tnode of object;
@@ -5165,7 +5212,8 @@ implementation
            @ttypeconvnode._second_nothing,  { arrayconstructor_2_dynarray }
            @ttypeconvnode._second_nothing,  { arrayconstructor_2_array }
            @ttypeconvnode._second_nothing,  { anonproc_2_funcref }
-           @ttypeconvnode._second_nothing   { procvar_2_funcref }
+           @ttypeconvnode._second_nothing,  { procvar_2_funcref }
+           nil { tuple_2_tuple, removed in typecheck_tuple_2_tuple }
          );
       type
          tprocedureofobject = procedure of object;
