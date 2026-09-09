@@ -622,19 +622,17 @@ implementation
               result:=caddnode.create(equaln,subj.getcopy,lo);
           end;
 
-        var
-          pat,cond : tnode;
-          fields : array of tnode;
-          fieldcount,i,symidx : integer;
-          sym : tsym;
-          recdef : trecorddef;
-        begin
-          is_catchall:=false;
-          { tuple pattern with potential _ wildcards }
-          if has_subject and (current_scanner.token=_LKLAMMER) and
-             assigned(subject.resultdef) and (subject.resultdef.typ=recorddef) and
-             (df_tuple in subject.resultdef.defoptions) then
-            begin
+        { one `( pat, pat, ... )` tuple pattern: per-field AND chain, `_`
+          skips a field. a single parenthesized expression is a plain
+          equality check }
+        function parse_tuple_pattern:tnode;
+          var
+            pat,cond : tnode;
+            fields : array of tnode;
+            fieldcount,i,symidx : integer;
+            sym : tsym;
+            recdef : trecorddef;
+          begin
               consume(_LKLAMMER);
               fieldcount:=0;
               setlength(fields,8);
@@ -690,6 +688,33 @@ implementation
               if cond=nil then
                 cond:=cordconstnode.create(1,pasbool1type,false);
               result:=cond;
+          end;
+
+        var
+          pat : tnode;
+        begin
+          is_catchall:=false;
+          { tuple pattern with potential _ wildcards, comma-separated
+            patterns are OR'd like ordinal ones }
+          if has_subject and (current_scanner.token=_LKLAMMER) and
+             assigned(subject.resultdef) and (subject.resultdef.typ=recorddef) and
+             (df_tuple in subject.resultdef.defoptions) then
+            begin
+              result:=parse_tuple_pattern;
+              while try_to_consume(_COMMA) do
+                begin
+                  if is_wildcard_underscore then
+                    begin
+                      is_catchall:=true;
+                      consume(_ID);
+                      if current_scanner.token=_COMMA then
+                        Comment(V_Error,'`_` must be the last pattern in a `match` branch');
+                      result.free;
+                      result:=nil;
+                      exit;
+                    end;
+                  result:=caddnode.create(orn,result,parse_tuple_pattern);
+                end;
             end
           else
             begin

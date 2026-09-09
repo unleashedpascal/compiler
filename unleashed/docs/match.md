@@ -167,6 +167,18 @@ end;
 
 Available in subject-based mode when the subject is a tuple. `_` inside a tuple pattern skips that field; every non-wildcard field is compared with `=` and the results are AND'd. `(_, _)` matches any tuple of that shape.
 
+Tuple patterns combine with commas like any other pattern: the branch matches when any listed tuple matches. A bare `_` may close the list and turns the branch into a catch-all:
+
+```pascal
+function closes(open, close: char): boolean;
+begin
+  result := match (open, close) of
+    ('(', ')'), ('[', ']'), ('{', '}'): true;
+    _: false;
+  end;
+end;
+```
+
 ## Match as expression
 
 ```pascal
