@@ -86,6 +86,40 @@ var l: TList<integer>;
 
 **The switch replaces the explicit form, it does not stack on top of it.** With `implicitgenerics` active, `generic` and `specialize` are ordinary identifiers again (exactly as in `{$mode delphi}`), so `generic TList<T> = class` no longer parses - use the plain `TList<T>` form. This is the whole point: one modeswitch buys the Delphi generic surface in any mode. If you need the explicit `generic` / `specialize` keywords, compile that unit in `objfpc` without the switch.
 
+### No type inference at call sites
+
+`implicitgenerics` changes the spelling only. It does **not** infer the type arguments of a generic routine from the actual parameters. A call to a generic function or procedure always names its type arguments in `<...>`; a call without them is an error, regardless of how obvious the type looks:
+
+```pascal
+function maxOf<T>(a, b: T): T;
+begin
+  result := if a > b then a else b;
+end;
+
+var d: double = 2.5;
+
+writeln(maxOf<double>(d, 1.5)); // ok
+writeln(maxOf(d, 1.5));         // Error: Wrong number of parameters specified for call to "maxOf"
+```
+
+The error message talks about the parameter count because without type arguments the compiler looks for a non-generic `maxOf` taking two parameters and finds none.
+
+Inference from arguments is a separate stock modeswitch, `implicitfunctionspecialization`, and unleashed mode leaves it **off**. It infers the type of an integer literal as the smallest signed type that holds it, so the specialization silently computes in that narrow type:
+
+```pascal
+{$modeswitch implicitfunctionspecialization} // opt-in, per file
+
+function sumOf<T>(a, b: T): T;
+begin
+  result := a + b;
+end;
+
+writeln(sumOf(100, 100));          // -56: T inferred as ShortInt, the sum wraps
+writeln(sumOf<integer>(100, 100)); // 200
+```
+
+Enable it per file when that trade-off is acceptable; the explicit `<...>` form keeps working alongside it.
+
 ## Helpers for specializations
 
 Unleashed-only, no separate modeswitch. A helper may extend a generic specialization, spelled directly in the helper declaration - no named alias needed:
