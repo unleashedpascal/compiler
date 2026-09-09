@@ -501,6 +501,9 @@ implementation
                        current_tokenpos:=positions[ni];
                        check_allowed_for_var_or_const(hdef,false);
                        syms[ni]:=cstaticvarsym.create(names[ni],vs_value,hdef,[]);
+                       { data segment storage is zero-filled, so a read before
+                         any write is not an uninitialized access }
+                       syms[ni].varstate:=vs_initialised;
                        syms[ni].visibility:=symtablestack.top.currentvisibility;
                        symtablestack.top.insertsym(syms[ni]);
                        syms[ni].register_sym;
