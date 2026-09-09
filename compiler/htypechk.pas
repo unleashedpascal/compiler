@@ -2257,7 +2257,7 @@ implementation
     function  valid_for_formal_constref(p : tnode; report_errors: boolean) : boolean;
       begin
         valid_for_formal_constref:=(p.resultdef.typ=formaldef) or
-          valid_for_assign(p,[valid_void,valid_range],report_errors);
+          valid_for_assign(p,[valid_void,valid_const,valid_range],report_errors);
       end;
 
 
