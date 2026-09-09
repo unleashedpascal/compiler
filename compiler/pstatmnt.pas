@@ -5122,6 +5122,8 @@ implementation
                 inc(commas);
             _ASSIGNMENT,_SEMICOLON,_END,_EOF:
               break;
+            else
+              ;
           end;
           consume(current_scanner.token);
         until false;
