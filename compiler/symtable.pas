@@ -1172,12 +1172,13 @@ implementation
            localvarsym,
            paravarsym :
              begin
-               if assigned(tabstractvarsym(sym).vardef) and
-                  is_managed_type(tabstractvarsym(sym).vardef) then
-                 include(tableoptions,sto_needs_init_final);
-               if is_record((tabstractvarsym(sym).vardef)) and
-                   (mop_initialize in trecordsymtable(trecorddef(tabstractvarsym(sym).vardef).symtable).managementoperators) then
-                 include(tableoptions,sto_has_non_trivial_init);
+               if assigned(tabstractvarsym(sym).vardef) then
+                 begin
+                   if is_managed_type(tabstractvarsym(sym).vardef) then
+                     include(tableoptions,sto_needs_init_final);
+                   if has_non_trivial_value_init(tabstractvarsym(sym).vardef) then
+                     include(tableoptions,sto_has_non_trivial_init);
+                 end;
              end;
            else
              ;

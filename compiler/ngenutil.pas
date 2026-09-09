@@ -350,7 +350,9 @@ implementation
           ((tsym(p).typ = staticvarsym) and
            (
              is_record(tabstractvarsym(p).vardef) or
-             is_object(tabstractvarsym(p).vardef)
+             is_object(tabstractvarsym(p).vardef) or
+             (is_normal_array(tabstractvarsym(p).vardef) and
+              has_non_trivial_value_init(tabstractvarsym(p).vardef))
            )
           )
          ) and
@@ -363,8 +365,7 @@ implementation
             even if they aren't referenced in *this* unit }
           (
             (tsym(p).owner.symtabletype=globalsymtable) and
-            is_record(tabstractvarsym(p).vardef) and
-            (mop_initialize in trecordsymtable(trecorddef(tabstractvarsym(p).vardef).symtable).managementoperators)
+            has_non_trivial_value_init(tabstractvarsym(p).vardef)
           )
          ) and
          not(vo_is_typed_const in tabstractvarsym(p).varoptions) and
