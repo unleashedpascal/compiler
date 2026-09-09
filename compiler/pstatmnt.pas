@@ -5045,27 +5045,27 @@ implementation
         end;
       end;
 
-    { Detects ( id, id, ... ) := tuple_expr destructuring assignment at
-      the start of a statement. Uses scanner token recording to peek.
+    { Detects ( target, target, ... ) := tuple_expr destructuring assignment
+      at the start of a statement. Uses scanner token recording to peek.
       Returns a block of per-field assignments if the pattern matches,
       otherwise nil with scanner state restored via replay. }
     function try_tuple_destructure_assign : tnode;
       var
         buf : tdynamicarray;
-        names : array of string;
-        namecount : longint;
+        targets : array of tnode;
+        targetcount : longint;
+        depth,
+        commas : longint;
         match : boolean;
         initexpr : tnode;
         recdef : trecorddef;
         sym : tsym;
-        lookst : tsymtable;
         fieldsyms : array of tfieldvarsym;
         fieldcount : longint;
         i : longint;
         tempnode : ttempcreatenode;
         blk : tblocknode;
         laststmt : tstatementnode;
-        lhs : tnode;
       begin
         result:=nil;
         if current_scanner.is_recording_tokens then
@@ -5073,48 +5073,56 @@ implementation
         buf:=tdynamicarray.create(64);
         current_scanner.startrecordtokens(buf);
         consume(_LKLAMMER);
-        namecount:=0;
-        setlength(names,4);
-        match:=true;
-        while current_scanner.token=_ID do
-          begin
-            if namecount>=length(names) then
-              setlength(names,length(names)*2);
-            names[namecount]:=current_scanner.orgpattern;
-            inc(namecount);
-            consume(_ID);
-            if current_scanner.token=_RKLAMMER then
-              break;
-            if current_scanner.token<>_COMMA then
+        { scan to the matching ) without parsing: targets may be any
+          assignable expression (a[i], r.f, p^), so only bracket depth and
+          top-level commas matter here }
+        depth:=0;
+        commas:=0;
+        match:=false;
+        repeat
+          case current_scanner.token of
+            _LKLAMMER,_LECKKLAMMER:
+              inc(depth);
+            _RKLAMMER,_RECKKLAMMER:
               begin
-                match:=false;
-                break;
+                if depth=0 then
+                  begin
+                    match:=current_scanner.token=_RKLAMMER;
+                    break;
+                  end;
+                dec(depth);
               end;
-            consume(_COMMA);
+            _COMMA:
+              if depth=0 then
+                inc(commas);
+            _ASSIGNMENT,_SEMICOLON,_END,_EOF:
+              break;
           end;
-        if match and (current_scanner.token=_RKLAMMER) then
+          consume(current_scanner.token);
+        until false;
+        if match then
           begin
             consume(_RKLAMMER);
-            match:=current_scanner.token=_ASSIGNMENT;
-          end
-        else
-          match:=false;
+            match:=(commas>0) and (current_scanner.token=_ASSIGNMENT);
+          end;
         current_scanner.stoprecordtokens;
-        if not match or (namecount<2) then
-          begin
-            current_scanner.startreplaytokens(buf,false);
-            exit;
-          end;
-        { consumed already: (, ids, commas, ), := not yet consumed but flags done.
-          Replay gets us back, then re-consume to eat them properly }
         current_scanner.startreplaytokens(buf,false);
+        if not match then
+          exit;
+
         consume(_LKLAMMER);
-        for i:=0 to namecount-1 do
-          begin
-            consume(_ID);
-            if i<namecount-1 then
-              consume(_COMMA);
-          end;
+        setlength(targets,commas+1);
+        targetcount:=0;
+        repeat
+          if (current_scanner.token=_ID) and (current_scanner.orgpattern='_') then
+            begin
+              consume(_ID);
+              targets[targetcount]:=nil;
+            end
+          else
+            targets[targetcount]:=comp_expr([ef_accept_equal]);
+          inc(targetcount);
+        until not try_to_consume(_COMMA);
         consume(_RKLAMMER);
         consume(_ASSIGNMENT);
 
@@ -5124,6 +5132,8 @@ implementation
            (initexpr.resultdef.typ<>recorddef) then
           begin
             Message(parser_e_illegal_expression);
+            for i:=0 to targetcount-1 do
+              targets[i].free;
             initexpr.free;
             result:=cerrornode.create;
             exit;
@@ -5141,9 +5151,11 @@ implementation
               end;
           end;
         setlength(fieldsyms,fieldcount);
-        if namecount<>fieldcount then
+        if targetcount<>fieldcount then
           begin
             Message(parser_e_illegal_expression);
+            for i:=0 to targetcount-1 do
+              targets[i].free;
             initexpr.free;
             result:=cerrornode.create;
             exit;
@@ -5153,21 +5165,16 @@ implementation
         addstatement(laststmt,tempnode);
         addstatement(laststmt,
           cassignmentnode.create(ctemprefnode.create(tempnode),initexpr));
-        for i:=0 to namecount-1 do
+        for i:=0 to targetcount-1 do
           begin
-            if names[i]='_' then
+            if not assigned(targets[i]) then
               continue;
-            if not searchsym(upper(names[i]),sym,lookst) then
-              begin
-                Message1(sym_e_id_not_found,names[i]);
-                continue;
-              end;
-            if sym.typ in [localvarsym,staticvarsym,paravarsym] then
-              tabstractnormalvarsym(sym).varstate:=vs_initialised;
-            lhs:=cloadnode.create(sym,sym.owner);
+            if (targets[i].nodetype=loadn) and
+               (tloadnode(targets[i]).symtableentry.typ in [localvarsym,staticvarsym,paravarsym]) then
+              tabstractnormalvarsym(tloadnode(targets[i]).symtableentry).varstate:=vs_initialised;
             addstatement(laststmt,
               cassignmentnode.create(
-                lhs,
+                targets[i],
                 csubscriptnode.create(fieldsyms[i],ctemprefnode.create(tempnode))));
           end;
         addstatement(laststmt,ctempdeletenode.create_normal_temp(tempnode));

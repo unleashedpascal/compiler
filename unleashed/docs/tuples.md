@@ -76,6 +76,10 @@ var x, y: integer;
 // swap idiom
 (x, y) := (y, x);
 
+// targets are any assignable expressions: array elements, fields, derefs
+(a[0], a[1]) := (a[1], a[0]);
+(r.p, r.q) := getPair;
+
 // wildcard _ ignores a field
 var (first, _, _, last) := getQuad;
 ```
