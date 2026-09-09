@@ -7056,9 +7056,26 @@ implementation
           gensym : tsym;
           parseddef,
           gendef : tdef;
-          ptmp : tnode;
+          ptmp,
+          inner : tnode;
         begin
           result:=false;
+          { `not f<T>(x)`: factor returns the negation of a bare specializen,
+            resolve the operand and keep the negation on top. factor already
+            typechecked the negation against the placeholder, so drop that
+            result and let it be typechecked again over the real call }
+          if (p1.nodetype=notn) and assigned(tunarynode(p1).left) and
+             (tunarynode(p1).left.nodetype=specializen) then
+            begin
+              inner:=tunarynode(p1).left;
+              result:=maybe_handle_specialization(inner,p2,filepos);
+              if result then
+                begin
+                  tunarynode(p1).left:=inner;
+                  p1.resultdef:=nil;
+                end;
+              exit;
+            end;
           { we need to decide whether we have an inline specialization
             (type nodes to the left and right of "<", mode Delphi and
             ">" or "," following) or a normal "<" comparison }
