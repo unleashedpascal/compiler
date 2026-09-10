@@ -199,9 +199,51 @@ with var t := autofree T.Create do
 
 The classic `with X do BODY` (no inline-var, no autofree) is unchanged.
 
+## Unit initialization and finalization
+
+A `defer` written directly in a unit's `initialization` section does not run when that section ends. It runs at the very end of the unit's finalization, so a resource set up during initialization stays usable for as long as the unit is loaded. The same holds for `autofree`, and for the `begin..end` form a unit may use instead of the `initialization` keyword.
+
+```pascal
+unit ucache;
+
+{$mode unleashed}
+
+interface
+
+uses Classes;
+
+var
+  cache: TStringList;
+
+implementation
+
+initialization
+  cache := autofree TStringList.Create;
+  cache.Add('warm');
+
+finalization
+  cache.SaveToFile('cache.txt'); // cache is still alive here
+
+end.
+// cache.Free runs after the finalization body
+```
+
+| Where the `defer` sits | When it runs |
+|---|---|
+| top level of `initialization` | after the whole finalization body, in reverse registration order |
+| a nested `begin..end` inside `initialization` | at the end of that nested block |
+| top level of `finalization` | at the end of the finalization body |
+| a routine or the program body | at the end of its block, as everywhere else |
+
+- The unit's own `finalization` statements run first, the hoisted ones after all of them. Code in `finalization` still sees the objects alive.
+- A unit that has initialization defers but no `finalization` section gets one generated, so the deferred statements still run at unload.
+- A defer the initialization never reached does not run. The flag that records it is unit level storage and starts out false.
+- If the initialization section raises, the RTL does not finalize the unit and the hoisted statements never run. Inside a routine the `try..finally` covers the exception path too, so this is the one place where `defer` is weaker.
+- A deferred statement that reads a variable living in a routine frame keeps the block scope it had, because it cannot outlive the frame it reads.
+
 ## Lowering
 
-`defer X;` registers an entry in a per-block list; at the end of the block the parser injects a `try..finally` that runs the entries in reverse, each gated on a per-defer boolean flag so only reached registrations fire. `autofree EXPR` desugars to the assignment plus a registered nil-guarded `Free()` defer. A scoped `with` with both user defers and `autofree` nests two `try..finally` frames - the autofree cleanup is the outer one, so it runs after any body defers.
+`defer X;` registers an entry in a per-block list; at the end of the block the parser injects a `try..finally` that runs the entries in reverse, each gated on a per-defer boolean flag so only reached registrations fire. `autofree EXPR` desugars to the assignment plus a registered nil-guarded `Free()` defer. A defer at the top level of a unit's initialization section is not lowered into that block at all: the parser hands it to the module, which emits it at the end of the unit's finalization routine, guarded by a unit level flag the initialization sets when it reaches the defer. A scoped `with` with both user defers and `autofree` nests two `try..finally` frames - the autofree cleanup is the outer one, so it runs after any body defers.
 
 ## Limitations
 
