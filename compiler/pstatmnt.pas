@@ -4696,6 +4696,7 @@ implementation
               consume(_COLON);
               read_anon_type(hdef,false,nil);
               block_type := bt_var;
+              check_fam_var_type(hdef,filepos);
               if try_to_consume(_ASSIGNMENT) then
                 begin
                   block_type := old_block_type;
@@ -4734,6 +4735,7 @@ implementation
                   exit;
                 end;
               hdef := initexpr.resultdef;
+              check_fam_var_type(hdef,initexpr.fileinfo);
               { same inference rules as inline var: char literal promotes to default
                 string type, sub-32-bit integers promote to LongInt }
               if is_conststring_array(hdef) or
