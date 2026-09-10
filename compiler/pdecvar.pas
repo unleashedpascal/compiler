@@ -2472,9 +2472,6 @@ implementation
            reuse pre-existing locals as seen_size/seen_bitsize/seen_align) }
          seen_bitalign : boolean;
          parsed_union_bitalign : longint;
-         { tracks whether the record already has a flexible array member;
-           once set, no further fields are allowed }
-         record_fam_seen : boolean;
          { tracks whether the body opened with `of <type>` and pushed a
            default type onto the composable_default_type_stack }
          pushed_default_type : boolean;
@@ -2548,7 +2545,6 @@ implementation
          removeclassoption:=false;
          had_generic:=false;
          attr_element_count:=0;
-         record_fam_seen:=false;
          while ((current_scanner.token=_ID) or
                 ((vd_record in options) and
                  (m_composable_records in current_settings.modeswitches) and
@@ -2563,12 +2559,13 @@ implementation
                  ((m_final_fields in current_settings.modeswitches) and
                   (current_scanner.idtoken=_FINAL)))) do
            begin
-             { a flexible array member must be the last field of the record }
-             if record_fam_seen then
-               begin
-                 Message(parser_e_fam_must_be_last_field);
-                 break;
-               end;
+             { a flexible array member must be the last field of the record;
+               the record itself is asked so the rule holds across field
+               groups (visibility sections, methods, `class var` sections).
+               static fields do not take part in the layout }
+             if not (vd_class in options) and
+                record_has_flexible_array_field(tdef(recst.defowner)) then
+               Message(parser_e_fam_must_be_last_field);
              { inline anonymous record `record fields end;` solo (optionally
                prefixed with `packed` / `bitpacked`): parse an unnamed record
                def and embed via composition carrier }
@@ -3120,7 +3117,6 @@ implementation
                        end
                      else
                        begin
-                         record_fam_seen:=true;
                          { auto-infer count: pick the last ordinal sibling
                            field declared before the FAM; lets the debugger
                            pretty-print the array without a `count` clause
@@ -3468,6 +3464,11 @@ implementation
          if (vd_record in options) and
             try_to_consume(_CASE) then
            begin
+              { a variant part after a flexible array member would overlay
+                its tail }
+              if not (vd_class in options) and
+                 record_has_flexible_array_field(tdef(recst.defowner)) then
+                Message(parser_e_fam_must_be_last_field);
               maxsize:=0;
               maxalignment:=0;
               maxpadalign:=0;
