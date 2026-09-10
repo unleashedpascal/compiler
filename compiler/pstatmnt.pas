@@ -4598,6 +4598,7 @@ implementation
             consume(_COLON);
             read_anon_type(hdef,false,nil);
             block_type:=bt_const;
+            check_fam_var_type(hdef,filepos);
             if not (cs_typed_const_writable in current_settings.localswitches) then
               begin
                 varspez:=vs_const;
