@@ -73,15 +73,48 @@ The FAM gives the inline layout, honest `sizeof()`, a working `{$R+}` for the re
 
 Enforced at parse time, each with a dedicated diagnostic:
 
-1. **The FAM must be the last field.** `Flexible array members are only allowed as the last field of a record`.
+1. **The FAM must be the last field.** `A flexible array member must be the last field of the record`. The rule spans the whole record body: no instance field or variant part may follow the FAM after a visibility keyword, a method or a `class var` group either. A `class var` declared after the FAM is fine, it is static storage outside the layout.
 2. **At least one fixed field must precede it.** `A record with a flexible array member must have at least one other field`.
 3. **One FAM per record, one identifier per FAM declaration.** `one, two: array[] of byte` is rejected like a second FAM would be.
-4. **Plain `record` instance fields only.** Not in a `class`, `object`, variant part, `class var`, or `threadvar`.
-5. **A FAM-record cannot be embedded in another structured type** - use a pointer field instead.
-6. **A FAM-record cannot be an array element type** - the per-element size would be undefined.
-7. **A FAM-record cannot be a stand-alone variable, value parameter, or function result.** `Variable of type "T" with flexible array member must be allocated dynamically (use a pointer)`.
+4. **Plain `record` instance fields only.** Not in a `class`, `object`, variant part, `union` variant, `class var`, or `threadvar`.
+5. **A FAM-record cannot be embedded in another structured type** - use a pointer field instead. This covers a plain field, a tuple element and an `embed` of a FAM-record inside a `union`.
+6. **A FAM-record cannot be an array element type** - the per-element size would be undefined. Static, dynamic and open array parameters alike.
+7. **A FAM-record cannot be a stand-alone variable, value parameter, or function result.** `Variable of type "T" with flexible array member must be allocated dynamically (use a pointer)`. Stand-alone means any storage the compiler would have to size itself: a `var` or `threadvar` section, an inline `var` (declared or inferred, also `with var`), a `static` or `threadstatic` variable, a typed constant, a tuple element. Function result covers routines, procedural types and function references.
 
 Reference parameters (`var`, `const`, `constref`, `out`) of FAM-record type stay legal - they pass an address, no copy involved. Pointer-to-FAM-record (`PFamRec`) is unrestricted: field of any type, array element, any parameter kind, function result.
+
+### Composition
+
+With `composablerecords`, a FAM-record can be the **last** member of another record through `embed` or an inline anonymous `record ... end` block. The surrounding record then ends in the FAM and is a FAM-record itself: it obeys restrictions 5 to 7 and is allocated the same way.
+
+```pascal
+type
+  TPayload = record
+    len: integer;
+    data: array[] of byte;
+  end;
+
+  PPacket = ^TPacket;
+  TPacket = record
+    id: integer;
+    embed TPayload; // TPacket is now a FAM-record, data is its tail
+  end;
+
+var p: PPacket;
+begin
+  GetMem(p, sizeof(TPacket)+16);
+  p^.id := 1;
+  p^.len := 16;
+  p^.data[15] := 0;
+  FreeMem(p);
+end;
+```
+
+A field after such an `embed` is rejected by restriction 1 like a field after the FAM itself.
+
+### Methods and managed fields
+
+A FAM-record can have methods, properties, operators and management operators; they change nothing in the layout. Managed fields (strings, dynamic arrays, interfaces) and a managed FAM element type are allowed, but the record is created with `GetMem()` and released with `FreeMem()`, so nothing initializes or finalizes it automatically. Call `Initialize()` / `Finalize()` on the record yourself (this also runs the `Initialize` / `Finalize` management operators) and `FillChar()` the tail before writing managed elements into it.
 
 ## Use cases
 
