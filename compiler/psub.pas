@@ -470,6 +470,9 @@ implementation
              (current_module.is_unit or islibrary)
             ) then
            begin
+             { the initialization / finalization section is the outermost block
+               of the unit init / final routine }
+             current_procinfo.parsing_main_block:=true;
              if (current_scanner.token=_END) then
                 begin
                    consume(_END);

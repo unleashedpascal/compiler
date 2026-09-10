@@ -139,6 +139,16 @@ interface
         constructor create(_u : tmodule; frominterface : boolean);
       end;
 
+      { one `defer` statement lifted out of a unit's initialization section:
+        flagsym is the unit level boolean set when the defer was reached,
+        body the deferred statement (typed tobject to keep the node unit out
+        of this unit's uses clause) }
+      tinitdefer = class
+        flagsym : TSymEntry;
+        body : tobject;
+        constructor create(asym:TSymEntry;abody:tobject);
+      end;
+
       { tmodule }
 
       tmodule = class(tmodulebase)
@@ -294,6 +304,11 @@ interface
           module; iterated at module finish to emit Init/Done calls in the unit's
           init/final sections (entries are tstaticvarsym, not owned) }
         lock_cs_syms: tfplist;
+
+        { `defer` and `autofree` statements taken from this module's
+          initialization section; they run at unit finalization instead of at
+          the end of the initialization block (entries are tinitdefer, owned) }
+        init_defers: tfpobjectlist;
 
         { module-level thread-entry thunks synthesized for `async` call sites;
           their bodies reference a routine-local impl class, so they are created
@@ -679,6 +694,13 @@ implementation
       end;
 
 
+    constructor tinitdefer.create(asym:TSymEntry;abody:tobject);
+      begin
+         flagsym:=asym;
+         body:=abody;
+      end;
+
+
 {****************************************************************************
                                   TMODULE
  ****************************************************************************}
@@ -785,6 +807,7 @@ implementation
         waitingunits:=tfpobjectlist.create(false);
         used_rtti_attrs:=tfpobjectlist.create(false);
         lock_cs_syms:=tfplist.create;
+        init_defers:=tfpobjectlist.create(true);
         async_thunks:=nil;
         parfor_thunk_pd:=nil;
         parfor_nested_pvd:=nil;
@@ -917,6 +940,8 @@ implementation
         used_rtti_attrs := nil;
         lock_cs_syms.free;
         lock_cs_syms := nil;
+        init_defers.free;
+        init_defers := nil;
         async_thunks.free;
         async_thunks := nil;
         stringdispose(asmprefix);

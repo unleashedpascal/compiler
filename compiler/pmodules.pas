@@ -1105,6 +1105,44 @@ implementation
       end;
 
 
+    { Emit the defers taken out of the unit's initialization section at the end
+      of the finalization routine, in reverse order, each guarded by the flag
+      the initialization set when it reached that defer. Forces the finalization
+      routine to exist - the unit need not have a finalization section. }
+    procedure emit_init_defers(curr: tmodule; var fini_pi: tcgprocinfo);
+      var
+        i: longint;
+        entry: tinitdefer;
+        fini_block: tblocknode;
+        fini_stat: tstatementnode;
+        old_code: tnode;
+      begin
+        if (curr.init_defers=nil) or (curr.init_defers.count=0) then
+          exit;
+        if not assigned(fini_pi) then
+          fini_pi:=gen_implicit_initfinal(curr,mf_finalize,curr.localsymtable);
+
+        fini_block:=internalstatements(fini_stat);
+        old_code:=fini_pi.code;
+        if assigned(old_code) and (old_code.nodetype<>nothingn) then
+          addstatement(fini_stat,old_code)
+        else
+          old_code.free;
+        for i:=curr.init_defers.count-1 downto 0 do
+          begin
+            entry:=tinitdefer(curr.init_defers[i]);
+            addstatement(fini_stat,
+              cifnode.create(
+                cloadnode.create(tsym(entry.flagsym),entry.flagsym.owner),
+                tnode(entry.body),
+                nil));
+            entry.body:=nil;
+          end;
+        typecheckpass(tnode(fini_block));
+        fini_pi.code:=fini_block;
+      end;
+
+
     { Build a chain InitCriticalSection(sym_0); ... InitCriticalSection(sym_N-1)
       and prepend it to the unit's init body. Mirror chain in reverse for fini.
       Forces the init/fini procinfo to exist when the module has any hidden
@@ -1806,6 +1844,7 @@ type
            end;
 
          { wire up Init/Done for hidden CSes generated from `lock`/`trylock` blocks }
+         emit_init_defers(module,finalize_procinfo);
          emit_lock_initdone(module,init_procinfo,finalize_procinfo);
 
          { Now both init and finalize bodies are read and it is known
@@ -2957,6 +2996,7 @@ type
           end;
 
          { wire up Init/Done for hidden CSes generated from `lock`/`trylock` blocks }
+         emit_init_defers(curr,finalize_procinfo);
          emit_lock_initdone(curr,init_procinfo,finalize_procinfo);
 
          { the finalization routine of libraries is generic (and all libraries need to }
