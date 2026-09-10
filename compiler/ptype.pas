@@ -2410,6 +2410,13 @@ implementation
                 consume(_COLON);
                 pd.proctypeoption:=potype_function;
                 pd.returndef:=result_type([stoAllowSpecialization]);
+                { a FAM-record cannot be returned by value through a
+                  procedural type either }
+                if record_has_flexible_array_field(pd.returndef) then
+                  begin
+                    Message1(parser_e_fam_record_on_stack,pd.returndef.typename);
+                    pd.returndef:=generrordef;
+                  end;
               end
             else
               pd.proctypeoption:=potype_procedure;
