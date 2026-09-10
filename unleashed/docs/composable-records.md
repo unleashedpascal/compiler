@@ -1156,7 +1156,7 @@ Shipped working parts (regression tests live under `unleashed/tests/testfiles/co
 
 These are deliberately out of scope for the first release of `composablerecords`:
 
-- **Flexible Array Members (FAM).** A separate feature with its own modeswitch and [reference page](flexible-arrays.md) (`array[] of T` as the last field of a record). Not part of `composablerecords`.
+- **Flexible Array Members (FAM).** A separate feature with its own modeswitch and [reference page](flexible-arrays.md) (`array[] of T` as the last field of a record). Not part of `composablerecords`; a FAM-record can be embedded only as the last member of a record, which then becomes a FAM-record itself.
 - **Class / object / interface embedding.** Discussed and explicitly rejected; the semantics would be confusing or unsafe (see [What you cannot embed](#what-you-cannot-embed)).
 
 ## Reference: real-world WinAPI ports
