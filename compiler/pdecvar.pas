@@ -2850,6 +2850,11 @@ implementation
                            begin
                              anon_target_def:=ttypesym(srsym).typedef;
                              consume(_ID);
+                             { the tail of a FAM-record cannot overlay
+                               other variants }
+                             if (variantrecordlevel>0) and
+                                record_has_flexible_array_field(anon_target_def) then
+                               Message1(parser_e_fam_record_nested,anon_target_def.typename);
                              add_composition_carrier(recst,anon_target_def,
                                                      symtablestack.top.currentvisibility,
                                                      ck_anon_embed);

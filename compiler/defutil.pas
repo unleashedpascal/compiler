@@ -175,7 +175,8 @@ interface
     {# Returns true if p is a C99-style flexible array member (`array[] of T`) }
     function is_flexible_array(p : tdef) : boolean;
 
-    {# Returns true if p is a record whose last field is a flexible array member }
+    {# Returns true if p is a record whose last field is a flexible array member,
+       directly or through a trailing composition carrier }
     function record_has_flexible_array_field(p : tdef) : boolean;
 
     {# Returns true if p is a bitpacked array }
@@ -1012,7 +1013,12 @@ implementation
            end;
          if not assigned(lastfield) then
            exit;
-         result:=is_flexible_array(lastfield.vardef);
+         { a composition carrier (`embed T`, inline anonymous record) at the
+           tail lends its own trailing FAM to this record }
+         if lastfield.vardef.typ=recorddef then
+           result:=record_has_flexible_array_field(lastfield.vardef)
+         else
+           result:=is_flexible_array(lastfield.vardef);
       end;
 
     { true if p is an ansi string def }
