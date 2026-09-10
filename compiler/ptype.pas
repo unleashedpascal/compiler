@@ -831,6 +831,18 @@ implementation
       var
         fs : tfieldvarsym;
       begin
+        { a tuple element is stored by value, which a bare flexible array
+          or a FAM-record cannot be }
+        if is_flexible_array(ftype) then
+          begin
+            Message(parser_e_fam_outside_record);
+            ftype:=generrordef;
+          end
+        else if record_has_flexible_array_field(ftype) then
+          begin
+            Message1(parser_e_fam_record_nested,ftype.typename);
+            ftype:=generrordef;
+          end;
         fs:=cfieldvarsym.create(fname,vs_value,ftype,[]);
         trecordsymtable(recdef.symtable).insertsym(fs);
         trecordsymtable(recdef.symtable).addfield(fs,vis_public);
