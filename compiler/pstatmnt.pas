@@ -6522,6 +6522,74 @@ implementation
       end;
 
 
+    { a deferred body that reads a variable living in a routine frame - the
+      `on E` symbol of an except handler, a parameter of a nested routine -
+      cannot run once that frame is gone }
+    function defer_body_is_frame_bound(var n: tnode; arg: pointer): foreachnoderesult;
+      begin
+        result:=fen_false;
+        if (n.nodetype=loadn) and
+           assigned(tloadnode(n).symtableentry) and
+           (tloadnode(n).symtableentry.typ in [localvarsym,paravarsym]) then
+          begin
+            pboolean(arg)^:=true;
+            result:=fen_norecurse_true;
+          end;
+      end;
+
+
+    function init_defer_collect_callback(var n: tnode; arg: pointer): foreachnoderesult;
+      var
+        flagvar    : tstaticvarsym;
+        flagname   : TIDString;
+        deferred   : tnode;
+        asgn       : tnode;
+        frame_bound: boolean;
+      begin
+        result:=fen_false;
+        // inner blocks keep their own defer scope, same as in a routine body
+        if (n.nodetype=blockn) and not (bnf_defer_transparent in tblocknode(n).blocknodeflags) then
+          exit(fen_norecurse_false);
+        if n.nodetype<>defern then
+          exit;
+        frame_bound:=false;
+        if assigned(tunarynode(n).left) then
+          foreachnodestatic(pm_preprocess,tunarynode(n).left,@defer_body_is_frame_bound,@frame_bound);
+        // leave it for rewrite_defers_in_block to scope to the block
+        if frame_bound then
+          exit;
+        // the flag has to outlive the initialization routine, so it is a unit
+        // level static; BSS gives it the false it starts out with
+        flagname:='$defer_flag_'+tostr(n.fileinfo.line)+'_'+tostr(current_module.init_defers.count);
+        flagvar:=cstaticvarsym.create(flagname,vs_value,pasbool1type,[]);
+        include(flagvar.symoptions,sp_internal);
+        flagvar.varstate:=vs_initialised;
+        flagvar.register_sym;
+        current_module.localsymtable.insertsym(flagvar);
+        cnodeutils.insertbssdata(flagvar);
+        deferred:=tunarynode(n).left;
+        tunarynode(n).left:=nil;
+        current_module.init_defers.add(tinitdefer.create(flagvar,deferred));
+        asgn:=cassignmentnode.create(
+                cloadnode.create(flagvar,flagvar.owner),
+                cordconstnode.create(1,pasbool1type,false));
+        asgn.fileinfo:=n.fileinfo;
+        typecheckpass(asgn);
+        n.free;
+        n:=asgn;
+        result:=fen_norecurse_false;
+      end;
+
+
+    { hand the top level defers of a unit initialization section to the module,
+      which emits them at the end of the unit finalization routine. what stays
+      behind is rewritten into the block by rewrite_defers_in_block }
+    procedure hoist_defers_to_finalization(var first: tnode);
+      begin
+        foreachnodestatic(pm_preprocess,first,@init_defer_collect_callback,nil);
+      end;
+
+
     function single_statement : tnode;
       begin
         result:=statement();
@@ -6534,7 +6602,9 @@ implementation
          first,last : tnode;
          filepos : tfileposinfo;
          blockst : tblocksymtable;
-         is_routine_body : boolean;
+         is_routine_body,
+         is_unit_init_body,
+         is_final_body : boolean;
 
       begin
          first:=nil;
@@ -6548,7 +6618,15 @@ implementation
            the variable's scope, i.e. routine, not to inner blocks) }
          is_routine_body := assigned(current_procinfo) and (starttoken=_BEGIN) and
                             current_procinfo.parsing_main_block;
-         if is_routine_body then
+         { the unit init and final routines have no begin..end of their own -
+           their initialization / finalization section is the outermost block }
+         is_unit_init_body := assigned(current_procinfo) and
+                              (current_procinfo.procdef.proctypeoption=potype_unitinit) and
+                              ((starttoken=_BEGIN) or (starttoken=_INITIALIZATION)) and
+                              current_procinfo.parsing_main_block;
+         is_final_body := assigned(current_procinfo) and (starttoken=_FINALIZATION) and
+                          current_procinfo.parsing_main_block;
+         if is_routine_body or is_unit_init_body or is_final_body then
            current_procinfo.parsing_main_block:=false;
 
          { Push a block-scope symtable so that inline vars declared inside
@@ -6599,7 +6677,14 @@ implementation
            Must run while the block-scope symtable is still on the stack so that
            generated flag-vars land in the right scope. No-op if no defer in tree. }
          if assigned(first) then
-           rewrite_defers_in_block(first, is_routine_body);
+           begin
+             { a defer written in the initialization section belongs to the
+               unit, not to that section - move it to the finalization }
+             if is_unit_init_body then
+               hoist_defers_to_finalization(first);
+             rewrite_defers_in_block(first,
+               is_routine_body or is_unit_init_body or is_final_body);
+           end;
 
          { Pop the block-scope symtable and keep it on the procdef so nested
            debug scopes can still follow the original parent chain later on. }
