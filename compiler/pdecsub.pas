@@ -470,6 +470,13 @@ implementation
                    else
                      stoptions:=[];
                    single_type(arrayelementdef,stoptions);
+                   { per-element size would be undefined for an open array
+                     of FAM-records }
+                   if record_has_flexible_array_field(arrayelementdef) then
+                     begin
+                       Message1(parser_e_fam_record_in_array,arrayelementdef.typename);
+                       arrayelementdef:=generrordef;
+                     end;
                    if assigned(arrayelementdef.typesym) then
                      check_hints(arrayelementdef.typesym,arrayelementdef.typesym.symoptions,arrayelementdef.typesym.deprecatedmsg);
                    tarraydef(hdef).elementdef:=arrayelementdef;
