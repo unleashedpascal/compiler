@@ -63,7 +63,7 @@ implementation
        nutils,ngenutil,nbas,nadd,ncal,nmem,nset,ncnv,ncon,nld,nflw,ninl,nmat,
        { parser }
        scanner,
-       pbase,ptype,pexpr,ptconst,pdecl,pparautl,procdefutil,
+       pbase,ptype,pexpr,ptconst,pdecl,pdecvar,pparautl,procdefutil,
        { codegen }
        procinfo,cgbase,ncgutil,
        { assembler reader }
@@ -2970,6 +2970,8 @@ implementation
                type (Forms A and C). }
              if assigned(lifetime_init) and not assigned(hdef) then
                hdef := lifetime_init.resultdef;
+             if assigned(hdef) then
+               check_fam_var_type(hdef, lifetime_filepos);
              if not assigned(hdef) or (hdef = generrordef) then
                begin
                  if assigned(lifetime_init) then lifetime_init.free;
@@ -3035,6 +3037,8 @@ implementation
                  lifetime_init := comp_expr([ef_accept_equal]);
                  do_typecheckpass(lifetime_init);
                  hdef := lifetime_init.resultdef;
+                 if assigned(hdef) then
+                   check_fam_var_type(hdef, lifetime_filepos);
                  if not assigned(hdef) or (hdef = generrordef) then
                    begin
                      lifetime_init.free;
@@ -4104,6 +4108,7 @@ implementation
         tcsym          : tstaticvarsym;
         declpos,
         storepos       : tfileposinfo;
+        typepos        : tfileposinfo;
         { destructuring state }
         names : array of string;
         namecount : longint;
@@ -4251,8 +4256,10 @@ implementation
                 tokenised as pointer type, not as a control-character literal }
               block_type := bt_var_type;
               consume(_COLON);
+              typepos := current_tokenpos;
               read_anon_type(hdef, false, nil);
               block_type := bt_var;
+              check_fam_var_type(hdef, typepos);
               // anonymous function reference type: convert it to its
               // interface representation like regular var sections do
               if (hdef.typ=procvardef) and (hdef.typesym=nil) and
@@ -4387,6 +4394,8 @@ implementation
               initexpr := expr(true);
               do_typecheckpass(initexpr);
               hdef := initexpr.resultdef;
+              if assigned(hdef) then
+                check_fam_var_type(hdef, initexpr.fileinfo);
               { unleashed: array literal `[...]` -> infer element type from the
                 first non-nil element's category, force every element to that
                 type (compile error on mismatch), and wrap the constructor's

@@ -27,7 +27,7 @@ unit pdecvar;
 interface
 
     uses
-      cclasses,
+      cclasses,globtype,
       symtable,symsym,symdef,symtype;
 
     type
@@ -63,6 +63,11 @@ interface
 
     function check_allowed_for_var_or_const(def:tdef;allowdynarray:boolean):boolean;
 
+    { rejects a stand-alone variable or typed constant of a bare flexible
+      array type or of a FAM-record type: neither has a statically known
+      size, both must be allocated dynamically. def becomes generrordef }
+    procedure check_fam_var_type(var def:tdef;const typepos:tfileposinfo);
+
 implementation
 
     uses
@@ -70,7 +75,7 @@ implementation
        { common }
        cutils,
        { global }
-       globtype,globals,tokens,verbose,constexp,
+       globals,tokens,verbose,constexp,
        systems,
        { symtable }
        symconst,symbase,defutil,defcmp,symutil,symcreat,
@@ -1298,6 +1303,21 @@ implementation
     end;
 
 
+    procedure check_fam_var_type(var def:tdef;const typepos:tfileposinfo);
+      begin
+        if is_flexible_array(def) then
+          begin
+            Messagepos(typepos,parser_e_fam_outside_record);
+            def:=generrordef;
+          end
+        else if record_has_flexible_array_field(def) then
+          begin
+            Messagepos1(typepos,parser_e_fam_record_on_stack,def.typename);
+            def:=generrordef;
+          end;
+      end;
+
+
     procedure read_var_decls(options:Tvar_dec_options;out had_generic:boolean);
 
         procedure read_default_value(sc : TFPObjectList);
@@ -1666,20 +1686,7 @@ implementation
 
              read_anon_type(hdef,false,nil);
              maybe_guarantee_record_typesym(hdef,symtablestack.top);
-             { stand-alone variables of FAM-record type have no statically
-               known size, must be allocated via GetMem and accessed through
-               a pointer; bare flexible array member declarations outside
-               a record are also rejected }
-             if is_flexible_array(hdef) then
-               begin
-                 Messagepos(typepos,parser_e_fam_outside_record);
-                 hdef:=generrordef;
-               end
-             else if record_has_flexible_array_field(hdef) then
-               begin
-                 Messagepos1(typepos,parser_e_fam_record_on_stack,hdef.typename);
-                 hdef:=generrordef;
-               end;
+             check_fam_var_type(hdef,typepos);
              for i:=0 to sc.count-1 do
                begin
                  vs:=tabstractvarsym(sc[i]);
