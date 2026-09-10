@@ -495,6 +495,7 @@ implementation
                    consume(_COLON);
                    read_anon_type(hdef,false,nil);
                    block_type:=bt_const;
+                   check_fam_var_type(hdef,positions[0]);
                    setlength(syms,namecount);
                    for ni:=0 to namecount-1 do
                      begin
@@ -734,6 +735,7 @@ implementation
                    consume(_COLON);
                    read_anon_type(hdef,false,nil);
                    block_type:=bt_var;
+                   check_fam_var_type(hdef,positions[0]);
                    setlength(syms,namecount);
                    for ni:=0 to namecount-1 do
                      begin
