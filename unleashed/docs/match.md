@@ -195,9 +195,39 @@ var lbl := match
 end;
 ```
 
-Each branch yields a value; the result type unifies across branches with the same promotion rules as [if-expressions](statement-expressions.md). Both the subject-based and the condition-based form work, and both close with `end`.
+Each branch yields a value; the result type unifies across branches with the same promotion rules as [if-expressions](statement-expressions.md). Both the subject-based and the condition-based form work.
 
 A match expression must be exhaustive: without a `_` / `else` / `otherwise` branch it reports `` `match` expression needs `_:`, `else` or `otherwise` to cover unmatched values ``.
+
+### Two closing forms
+
+How the expression closes depends on the catch-all, the same way a `case` expression closes (see [statement-expressions.md](statement-expressions.md)):
+
+**With `_:`** - the wildcard is a branch like any other, so the expression closes with `end`:
+
+```pascal
+var s := match x of
+  1: 'one';
+  2: 'two';
+  _: 'other';
+end;
+```
+
+**With `else` / `otherwise`** - the `else` expression is the final token of the construct; there is **no** trailing `end`:
+
+```pascal
+var t := match x of
+  1: 'one';
+  2: 'two';
+else 'other';
+
+var lbl := match
+  x > 100: 'big';
+  x > 10:  'medium';
+otherwise 'small';
+```
+
+Writing `end` after an `else` branch is a syntax error: the `end` then closes the enclosing block instead. In the statement form `else` does not end the match, the statement form always closes with `end`.
 
 ## Not supported
 
