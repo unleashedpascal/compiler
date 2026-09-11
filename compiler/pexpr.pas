@@ -7161,13 +7161,13 @@ implementation
       var
         p1,p2,ptmp : tnode;
         oldt    : Ttoken;
+        isnot   : boolean;
         filepos : tfileposinfo;
         gendef,parseddef : tdef;
         gensym : tsym;
         genlist : tfpobjectlist;
         dummyagain : boolean;
         dummyspezctxt : tspecializationcontext;
-        is_not_op : boolean;
       begin
         SubExprStart:
         if pred_level=highest_precedence then
@@ -7190,18 +7190,12 @@ implementation
              oldt:=current_scanner.token;
              filepos:=current_tokenpos;
              consume(current_scanner.token);
-             { delphi-style `is not T` and `not in S` (mode unleashed) }
-             is_not_op:=false;
-             if m_unleashed in current_settings.modeswitches then
-               begin
-                 if (oldt=_OP_IS) and (current_scanner.token=_OP_NOT) then
-                   begin
-                     consume(_OP_NOT);
-                     is_not_op:=true;
-                   end
-                 else if oldt=_OP_NOT then
-                   consume(_OP_IN);
-               end;
+             { "a is not b" is a short form for "not (a is b)", i.e. the "not"
+               belongs to the "is" and not to the right operand }
+             isnot:=(oldt=_OP_IS) and try_to_consume(_OP_NOT);
+             { `not in S` (mode unleashed) }
+             if (m_unleashed in current_settings.modeswitches) and (oldt=_OP_NOT) then
+               consume(_OP_IN);
              { an anonymous type as the first argument of an inline
                specialization, e.g. `TBox<(a: integer; b: string)>.Create`;
                the expression parser cannot read it }
@@ -7373,8 +7367,11 @@ implementation
                      _OP_IS:
                        begin
                          p1:=cisnode.create(p1,p2);
-                         if is_not_op then
-                           p1:=cnotnode.create(p1);
+                         if isnot then
+                           begin
+                             p1.fileinfo:=filepos;
+                             p1:=cnotnode.create(p1);
+                           end;
                        end;
                      else
                        internalerror(2019050528);
