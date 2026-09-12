@@ -760,11 +760,11 @@ implementation
         end;
 
       var
-        subject,cond,stmt,ifchain,firstcond,walknode,stmtblock,flagblock : tnode;
+        subject,cond,stmt,ifchain,firstcond,walknode,stmtblock,flagblock,subjectblock : tnode;
         fallthrough,has_subject,has_catchall,branch_catchall : boolean;
-        stmts,exprstatements,flagstmts : tstatementnode;
+        stmts,exprstatements,flagstmts,subjectstmts : tstatementnode;
         resultdef : tdef;
-        resultvar,matchedvar : ttempcreatenode;
+        resultvar,matchedvar,subjecttemp : ttempcreatenode;
       begin
         consume(_MATCH);
         { check for 'all' (context-sensitive) }
@@ -791,9 +791,17 @@ implementation
             if current_scanner.token=_OF then
               begin
                 has_subject:=true;
-                subject:=firstcond;
-                set_varstate(subject,vs_read,[vsf_must_be_valid]);
+                set_varstate(firstcond,vs_read,[vsf_must_be_valid]);
                 consume(_OF);
+                { every branch condition copies the subject node, so a
+                  subject with side effects would run once per comparison.
+                  evaluate it once into a temp and compare that instead }
+                subjecttemp:=ctempcreatenode.create(firstcond.resultdef,firstcond.resultdef.size,tt_persistent,true);
+                subjectblock:=internalstatements(subjectstmts);
+                addstatement(subjectstmts,subjecttemp);
+                addstatement(subjectstmts,cassignmentnode.create(ctemprefnode.create(subjecttemp),firstcond));
+                subject:=ctemprefnode.create(subjecttemp);
+                do_typecheckpass(subject);
                 firstcond:=nil;
               end;
           end;
@@ -868,11 +876,16 @@ implementation
               end
             else
               consume(_END);
-            if has_subject then
-              subject.free;
             result:=cwhilerepeatnode.create(
               cordconstnode.create(1,pasbool1type,false),
               stmtblock,false,true);
+            if has_subject then
+              begin
+                subject.free;
+                addstatement(subjectstmts,result);
+                addstatement(subjectstmts,ctempdeletenode.create(subjecttemp));
+                result:=subjectblock;
+              end;
           end
         else
           begin
@@ -942,11 +955,21 @@ implementation
             if has_subject then
               subject.free;
             if not is_expr then
-              result:=ifchain
+              begin
+                result:=ifchain;
+                if has_subject then
+                  begin
+                    addstatement(subjectstmts,result);
+                    addstatement(subjectstmts,ctempdeletenode.create(subjecttemp));
+                    result:=subjectblock;
+                  end;
+              end
             else
               begin
                 { expression mode: wrap branches in temp var assignments }
                 result:=internalstatements(exprstatements);
+                if has_subject then
+                  addstatement(exprstatements,subjectblock);
                 resultvar:=ctempcreatenode.create(resultdef,resultdef.size,tt_persistent,true);
                 addstatement(exprstatements,resultvar);
                 { walk if-chain, wrap each branch value in assignment }
@@ -969,6 +992,8 @@ implementation
                   { single catch-all value }
                   ifchain:=cassignmentnode.create(ctemprefnode.create(resultvar),ifchain);
                 addstatement(exprstatements,ifchain);
+                if has_subject then
+                  addstatement(exprstatements,ctempdeletenode.create(subjecttemp));
                 addstatement(exprstatements,ctempdeletenode.create_normal_temp(resultvar));
                 addstatement(exprstatements,ctemprefnode.create(resultvar));
               end;
