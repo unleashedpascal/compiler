@@ -586,6 +586,11 @@ implementation
         else
           begin
             secname:=secnames[atype];
+            { with PIC, data carrying relocations must stay writable so a
+              shared library can be patched by the dynamic linker; the GNU
+              assembler writer uses .data.rel for the same reason }
+            if (atype=sec_rodata) and (cs_create_pic in current_settings.moduleswitches) then
+              secname:='.data.rel';
             if (atype=sec_fpc) and (Copy(aname,1,3)='res') then
               begin
                 result:=secname+'.'+aname;
