@@ -1555,6 +1555,10 @@ implementation
               end;
           end;
         result:=secoptions[atype];
+        { see TElfObjData.sectionname: .data.rel takes the place of .rodata }
+        if (target_asm.id in asms_int_elf) and (atype=sec_rodata) and
+           (cs_create_pic in current_settings.moduleswitches) then
+          include(result,oso_write);
         if (target_info.system in systems_wasm) and (atype=sec_bss) then
           Result:=Result+[oso_data,oso_sparse_data];
 {$ifdef OMFOBJSUPPORT}
