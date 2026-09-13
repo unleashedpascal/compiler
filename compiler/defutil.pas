@@ -1008,7 +1008,9 @@ implementation
          for i:=0 to st.SymList.count-1 do
            begin
              sym:=TSymEntry(st.SymList[i]);
-             if tsym(sym).typ=fieldvarsym then
+             { static fields take no part in the layout }
+             if (tsym(sym).typ=fieldvarsym) and
+                not (sp_static in tsym(sym).symoptions) then
                lastfield:=tfieldvarsym(sym);
            end;
          if not assigned(lastfield) then
