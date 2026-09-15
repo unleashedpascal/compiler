@@ -7161,7 +7161,7 @@ implementation
       var
         p1,p2,ptmp : tnode;
         oldt    : Ttoken;
-        isnot   : boolean;
+        negate  : boolean;
         filepos : tfileposinfo;
         gendef,parseddef : tdef;
         gensym : tsym;
@@ -7180,24 +7180,34 @@ implementation
         else
           p1:=sub_expr(succ(pred_level),flags+[ef_accept_equal],factornode);
         repeat
-          if (current_scanner.token in [NOTOKEN..last_operator]) and
-             ((current_scanner.token in operator_levels[pred_level]) or
-              ((m_unleashed in current_settings.modeswitches) and
-               (pred_level=opcompare) and
-               (current_scanner.token=_OP_NOT))) and
-             ((current_scanner.token<>_EQ) or (ef_accept_equal in flags)) then
+          { "not" is only a prefix operator, so a "not" directly behind an
+            operand can only be the start of "not in" }
+          if ((pred_level=opcompare) and
+              (current_scanner.token=_OP_NOT) and
+              (m_delphi_slang in current_settings.modeswitches)) or
+             ((current_scanner.token in [NOTOKEN..last_operator]) and
+              (current_scanner.token in operator_levels[pred_level]) and
+              ((current_scanner.token<>_EQ) or (ef_accept_equal in flags))) then
            begin
-             oldt:=current_scanner.token;
              filepos:=current_tokenpos;
-             consume(current_scanner.token);
-             { "a is not b" is a short form for "not (a is b)", i.e. the "not"
-               belongs to the "is" and not to the right operand }
-             isnot:=(oldt=_OP_IS) and
-               (m_delphi_slang in current_settings.modeswitches) and
-               try_to_consume(_OP_NOT);
-             { `not in S` (mode unleashed) }
-             if (m_unleashed in current_settings.modeswitches) and (oldt=_OP_NOT) then
-               consume(_OP_IN);
+             if current_scanner.token=_OP_NOT then
+               begin
+                 { "a not in b" is a short form for "not (a in b)" }
+                 consume(_OP_NOT);
+                 consume(_OP_IN);
+                 oldt:=_OP_IN;
+                 negate:=true;
+               end
+             else
+               begin
+                 oldt:=current_scanner.token;
+                 consume(current_scanner.token);
+                 { "a is not b" is a short form for "not (a is b)", i.e. the "not"
+                   belongs to the "is" and not to the right operand }
+                 negate:=(oldt=_OP_IS) and
+                   (m_delphi_slang in current_settings.modeswitches) and
+                   try_to_consume(_OP_NOT);
+               end;
              { an anonymous type as the first argument of an inline
                specialization, e.g. `TBox<(a: integer; b: string)>.Create`;
                the expression parser cannot read it }
@@ -7369,7 +7379,7 @@ implementation
                      _OP_IS:
                        begin
                          p1:=cisnode.create(p1,p2);
-                         if isnot then
+                         if negate then
                            begin
                              p1.fileinfo:=filepos;
                              p1:=cnotnode.create(p1);
@@ -7380,7 +7390,14 @@ implementation
                    end;
                  end;
                _OP_IN :
-                 p1:=cinnode.create(p1,p2);
+                 begin
+                   p1:=cinnode.create(p1,p2);
+                   if negate then
+                     begin
+                       p1.fileinfo:=filepos;
+                       p1:=cnotnode.create(p1);
+                     end;
+                 end;
                _OP_OR,
                _PIPE {macpas only} :
                  begin
@@ -7397,8 +7414,6 @@ implementation
                  end;
                _OP_DIV :
                  p1:=cmoddivnode.create(divn,p1,p2);
-               _OP_NOT :
-                 p1:=cnotnode.create(cinnode.create(p1,p2));
                _OP_MOD :
                  begin
                    p1:=cmoddivnode.create(modn,p1,p2);
