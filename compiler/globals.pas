@@ -57,7 +57,7 @@ interface
           m_property,m_default_inline,m_except,m_advanced_records,
           m_array_operators,m_prefixed_attributes,m_underscoreisseparator,
           m_function_references,m_anonymous_functions,m_multiline_strings,
-          m_statement_expressions,m_implicit_generics];
+          m_statement_expressions,m_delphi_slang,m_implicit_generics];
        delphiunicodemodeswitches = delphimodeswitches + [m_systemcodepage,m_default_unicodestring];
        fpcmodeswitches =
          [m_fpc,m_string_pchar,m_nested_comment,m_repeat_forward,
@@ -72,7 +72,7 @@ interface
         m_statement_expressions,m_array_equality,m_inline_var,m_tuples,m_match,m_autofree,m_multiline_strings,
         m_multi_var_init,m_stringordcast,m_for_step,m_flexible_arrays,m_composable_records,m_implicit_generics,
         m_static_section,m_inline_static,m_thread_static,m_interpolated_strings,m_type_helpers,m_multi_helpers,
-        m_autoproperties,m_lock,m_asyncawait,m_parallelfor,m_int128,m_out_var,m_prepost_incdec,m_unleashed];
+        m_autoproperties,m_lock,m_asyncawait,m_parallelfor,m_int128,m_out_var,m_prepost_incdec,m_delphi_slang,m_unleashed];
        tpmodeswitches =
          [m_tp7,m_tp_procvar,m_duplicate_names];
 {$ifdef gpc_mode}

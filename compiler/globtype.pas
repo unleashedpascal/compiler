@@ -563,6 +563,7 @@ interface
          m_anonymous_functions, { enable Delphi-style anonymous functions }
          m_multiline_strings,   { multi-line strings denoted with '`' are enabled and valid }
          m_statement_expressions, { enables expressions using statements like if, case, try }
+         m_delphi_slang,        { Delphi slang, e.g. "a is not b" }
          m_array_equality,      { enables equality operator in addition to ArrayOperators modeswitch }
          m_strip_rtti,          { strip type-name strings from RTTI/VMT to make ASCII dump less identifying }
          m_inline_var,          { allow inline variable declarations inside statement blocks }
@@ -795,6 +796,7 @@ interface
          'ANONYMOUSFUNCTIONS',
          'MULTILINESTRINGS',
          'STATEMENTEXPRESSIONS',
+         'DELPHISLANG',
          'ARRAYEQUALITY',
          'STRIPRTTI',
          'INLINEVARS',
