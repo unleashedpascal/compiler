@@ -108,7 +108,7 @@ Declare variables at the point of first use, with type inference (`var x := expr
 
 ### [Statement Expressions](statement-expressions.md)
 
-`if`, `case`, and `try` as expressions that yield a value, computed where it is consumed. Only the taken branch is evaluated, numeric branches widen to a common type, and `try X except 'fallback'` turns an exception into a value. Each branch is a single expression: value-less statements (`raise`, `exit`) are rejected. Modeswitch `statementexpressions`.
+`if`, `case`, and `try` as expressions that yield a value, computed where it is consumed. Only the taken branch is evaluated, branches unify to a common type (numeric widening, common class ancestor, `Variant`), anonymous functions work as branch values, and `try X except 'fallback' end` turns an exception into a value. Each branch is a single expression: value-less statements (`raise`, `exit`) are rejected. Modeswitch `statementexpressions`, on by default in `unleashed` and `delphi` modes.
 
 ### [`match` Statement](match.md)
 

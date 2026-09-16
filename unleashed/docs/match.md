@@ -199,11 +199,9 @@ Each branch yields a value; the result type unifies across branches with the sam
 
 A match expression must be exhaustive: without a `_` / `else` / `otherwise` branch it reports `` `match` expression needs `_:`, `else` or `otherwise` to cover unmatched values ``.
 
-### Two closing forms
+### Closing the expression
 
-How the expression closes depends on the catch-all, the same way a `case` expression closes (see [statement-expressions.md](statement-expressions.md)):
-
-**With `_:`** - the wildcard is a branch like any other, so the expression closes with `end`:
+A match expression always closes with `end`, whichever catch-all it uses. `_:` is a branch like any other; `else` / `otherwise` take a single expression, with an optional semicolon before the `end`:
 
 ```pascal
 var s := match x of
@@ -211,23 +209,21 @@ var s := match x of
   2: 'two';
   _: 'other';
 end;
-```
 
-**With `else` / `otherwise`** - the `else` expression is the final token of the construct; there is **no** trailing `end`:
-
-```pascal
 var t := match x of
   1: 'one';
   2: 'two';
-else 'other';
+else
+  'other'
+end;
 
 var lbl := match
   x > 100: 'big';
   x > 10:  'medium';
-otherwise 'small';
+otherwise
+  'small'
+end;
 ```
-
-Writing `end` after an `else` branch is a syntax error: the `end` then closes the enclosing block instead. In the statement form `else` does not end the match, the statement form always closes with `end`.
 
 ## Not supported
 
