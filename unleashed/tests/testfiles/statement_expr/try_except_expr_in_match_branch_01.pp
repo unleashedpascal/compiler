@@ -7,8 +7,8 @@ uses SysUtils;
 function Parse(kind: Integer; s: String): Integer;
 begin
   match kind of
-    1: Result := try StrToInt(s) except 0;
-    2: Result := try StrToInt(s) * 2 except -1;
+    1: Result := try StrToInt(s) except 0 end;
+    2: Result := try StrToInt(s) * 2 except -1 end;
     _: Result := -99;
   end;
 end;

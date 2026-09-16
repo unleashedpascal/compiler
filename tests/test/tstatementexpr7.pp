@@ -1,9 +1,18 @@
+{%FAIL}
+{$Mode ObjFPC}{$H+}
 {$ModeSwitch StatementExpressions}
 var
-  s: String;
+  s, c: String;
 begin
-  s := if 0 < 1 then 'Foo' else 'Bar';
+  c:='Bar';
+  s := case c of
+    'Foo': 'Foo';
+    'Bar': 'Bar';
+    'FooBar': 'FooBar';
+    // not exhaustive
+  end;
+
   WriteLn(s);
-  if (s<>'Foo') then
+  if (s<>'Bar') then
     Halt(1);
 end.

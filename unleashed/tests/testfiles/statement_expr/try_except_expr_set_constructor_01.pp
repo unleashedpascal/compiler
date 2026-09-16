@@ -16,8 +16,8 @@ end;
 var
   s: TShades;
 begin
-  s := try [shMid] except [];
+  s := try [shMid] except [] end;
   if s <> [shMid] then halt(1);
-  s := try [boom] except [];
+  s := try [boom] except [] end;
   if s <> [] then halt(2);
 end.

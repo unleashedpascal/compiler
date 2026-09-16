@@ -6,7 +6,7 @@ uses SysUtils;
 
 function ParseSafe(const s: String): Integer;
 begin
-  Result := try StrToInt(s) except -1;
+  Result := try StrToInt(s) except -1 end;
 end;
 
 begin

@@ -498,7 +498,7 @@ scan_e_improperly_indented_multiline_string=02120_E_Incorrectly indented multi-l
 #
 # Parser
 #
-# 03455 is the last used one
+# 03458 is the last used one
 #
 % \section{Parser messages}
 % This section lists all parser messages. The parser takes care of the
@@ -1728,13 +1728,13 @@ parser_w_with_shadowed_field=03441_W_Field "$1" in WITH entry shadows an earlier
 % Two entries in the same \var{with} clause expose a field with the same name.
 % The later entry hides the earlier one, which is most likely unintended.
 %
-parser_e_tuple_needs_type=03377_E_Tuple fields need type annotation, e.g. (x, y, z: Integer)
+parser_e_tuple_needs_type=03456_E_Tuple fields need type annotation, e.g. (x, y, z: Integer)
 %
-parser_e_defer_inside_defer=03378_E_`defer` cannot be the deferred statement of another `defer`
+parser_e_defer_inside_defer=03457_E_`defer` cannot be the deferred statement of another `defer`
 % A `defer` statement may not itself defer another `defer`. Use a regular
 % statement (or a `begin..end` block) as the deferred body.
 %
-parser_e_autofree_requires_class=03379_E_`autofree` requires a class type derived from TObject
+parser_e_autofree_requires_class=03458_E_`autofree` requires a class type derived from TObject
 % The expression after `autofree` must produce a class instance whose type
 % inherits from TObject (so it has a `Free` method).
 %
@@ -2001,6 +2001,14 @@ parser_e_inline_decl_control_body=03445_E_Inline variable declaration cannot be 
 parser_w_unaligned_useless=03375_W_Unaligned is useless here.
 parser_w_aligned_useless=03376_W_Aligned is useless here.
 % Use of aligned(EXPR) or unaligned(EXPR) only has an effect if EXPR is a dereference.
+parser_e_stmt_expr_requires_else=03377_E_Statement expression does not handle all cases, an else branch is required
+% A case or try..except expression must return a value in all cases. Either the case labels
+% cover all possible values, or add an else (otherwise) branch.
+parser_e_stmt_expr_no_finally=03378_E_try..finally cannot be used as an expression
+% Only try..except can be used as expression
+parser_e_stmt_expr_anon_needs_type=03379_E_Anonymous functions in a statement expression require a procedural variable or function reference type
+% A statement expression with anonymous functions as values can only be assigned or passed
+% to a procedural variable or a function reference.
 parser_w_forceinline_not_possible=03446_W_Routine marked as "inline" will not be inlined: $1
 % The routine body uses a construct the inliner cannot expand (recursion,
 % nested routines, a variant array parameter, ...), so every call emits a
@@ -2032,7 +2040,7 @@ parser_e_async_no_open_array_param=03455_E_`async` cannot pass an open array par
 %
 # Type Checking
 #
-# 03454 is the last used parser one
+# 03458 is the last used parser one
 #
 # 04143 is the last used one
 #

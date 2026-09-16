@@ -1,10 +1,8 @@
 {%FAIL}
-{$Mode ObjFPC}
 {$ModeSwitch StatementExpressions}
-
 var
   s: String;
 begin
-  s := try 'Foo' except on e: TObject do 'Error' end;
+  s := if 0 < 1 then 'Foo' else 32; // cant be combined
   Halt(1);
 end.

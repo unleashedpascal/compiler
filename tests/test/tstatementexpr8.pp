@@ -1,8 +1,14 @@
-{%FAIL}
 {$ModeSwitch StatementExpressions}
 var
   s: String;
 begin
-  s := if 0 < 1 then 'Foo' else 32;
-  Halt(1);
+  s := case 5 of
+    0: 'Foo';
+    1..9: 'Bar';
+    otherwise 'FooBar'
+  end;
+
+  WriteLn(s);
+  if (s<>'Bar') then
+    Halt(1);
 end.

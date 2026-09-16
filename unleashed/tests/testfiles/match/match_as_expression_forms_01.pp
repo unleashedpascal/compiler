@@ -26,7 +26,7 @@ begin
   s := match x of
     1: 'one';
     2: 'two';
-  else 'unknown';
+  else 'unknown' end;
   if s <> 'unknown' then Halt(2);
 end;
 

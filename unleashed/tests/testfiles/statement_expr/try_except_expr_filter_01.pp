@@ -10,7 +10,8 @@ begin
            except
              on e: EConvertError do 'convert-error'
            else
-             'other-error';
+             'other-error'
+           end;
 end;
 
 begin

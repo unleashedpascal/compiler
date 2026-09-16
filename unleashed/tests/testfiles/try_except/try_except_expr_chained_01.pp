@@ -8,7 +8,7 @@ function ParseChain(const s: String): Integer;
 begin
   // try-except expression chained inside if-expression chain
   Result := if s = '' then -1
-            else try StrToInt(s) except -2;
+            else try StrToInt(s) except -2 end;
 end;
 
 begin

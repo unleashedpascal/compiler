@@ -1,13 +1,14 @@
+{%FAIL}
 {$ModeSwitch StatementExpressions}
+type TMyEnum = (meFirst, meSecond, meLast);
+
 var
-  sz: SizeInt;
+  s: String;
 begin
-  sz := sizeOf((
-    case 5 of
-    0: 'Foo';
-    5: widestring('Bar');
-    else 'FooBar'
-  )[1]);
-  WriteLn(sz);
-  if (sz<>2) then Halt(1);
+  s := case meSecond of
+    meFirst: 'Foo';
+    meSecond: 'Bar';
+    // not exhaustive
+  end;
+  Halt(1);
 end.

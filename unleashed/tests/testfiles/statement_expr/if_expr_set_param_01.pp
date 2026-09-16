@@ -23,5 +23,5 @@ begin
   if count(if flag then [shLow, shHigh] else []) <> 2 then halt(1);
   flag := false;
   if count(if flag then [shLow, shHigh] else []) <> 0 then halt(2);
-  if count(case ord(flag) of 0: [shMid]; else []) <> 1 then halt(3);
+  if count(case ord(flag) of 0: [shMid]; else [] end) <> 1 then halt(3);
 end.

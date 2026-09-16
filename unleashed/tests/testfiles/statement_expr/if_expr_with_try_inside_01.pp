@@ -7,7 +7,7 @@ uses SysUtils;
 function Format_(use_safe: Boolean; s: String): Integer;
 begin
   Result := if use_safe then
-              try StrToInt(s) except -1
+              try StrToInt(s) except -1 end
             else
               StrToInt(s);   // unsafe path: lets exception propagate
 end;

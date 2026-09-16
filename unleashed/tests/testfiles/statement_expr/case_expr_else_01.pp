@@ -14,7 +14,8 @@ begin
       6: 'Sat';
       7: 'Sun';
     else
-      '?';
+      '?'
+    end;
     if (d <= 7) and (Length(name) <> 3) then halt(1);
     if (d = 8) and (name <> '?') then halt(2);
   end;

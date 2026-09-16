@@ -1,11 +1,16 @@
+{$Mode EXTENDEDPASCAL}
 {$ModeSwitch StatementExpressions}
+program tstatementexpr9(output);
 var
-  s: String;
+  i: Integer;
 begin
-  s := if 0 < 1 then 'Foo' else
-       if 1 < 2 then 'Bar' else
-       'Baz';
-  WriteLn(s);
-  if (s<>'Foo') then
+  i := case 5 of
+    0: 3;
+    1..9: 42;
+    otherwise 0
+  end;
+
+  WriteLn(i);
+  if (i<>42) then
     Halt(1);
 end.
