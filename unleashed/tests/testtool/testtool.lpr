@@ -56,6 +56,8 @@ var
   GCompilerPath: String;
   GTargetOS: String;
   GTargetCPU: String;
+  GTargetName: String;
+  GExeExt: String;     // '.exe' for windows targets, '' elsewhere
   GForceNoRun: Boolean;
   GFilter: String;
   GExclude: String;
@@ -268,6 +270,31 @@ begin
   Result := (code = 0) and not timedOut and (Value <> '');
 end;
 
+// --target names and their -P/-T pair; `target` holds the full name plus
+// comma-separated aliases
+const
+  Targets: array[6] of record target, cpu, os: String; end = (
+    (target: 'windows32,win32,i386-win32';    cpu: 'i386';    os: 'win32'),
+    (target: 'windows64,win64,x86_64-win64';  cpu: 'x86_64';  os: 'win64'),
+    (target: 'linux32,i386-linux';            cpu: 'i386';    os: 'linux'),
+    (target: 'linux64,x86_64-linux';          cpu: 'x86_64';  os: 'linux'),
+    (target: 'linuxarm64,arm64,aarch64,aarch64-linux'; cpu: 'aarch64'; os: 'linux'),
+    (target: 'windowsarm64,winarm64,aarch64-win64';    cpu: 'aarch64'; os: 'win64')
+  );
+
+function FindTarget(const Name: String; out Cpu, OS: String): Boolean;
+begin
+  for var t in Targets do
+    for var alias in t.target.Split([',']) do
+      if SameText(alias, Name) then
+      begin
+        Cpu := t.cpu;
+        OS := t.os;
+        Exit(true);
+      end;
+  Result := false;
+end;
+
 // case-insensitive prefix check on a line, after stripping leading whitespace
 function LineStartsWithDirective(const Line, Prefix: String): Boolean;
 begin
@@ -393,6 +420,8 @@ begin
   // shape (smaller, faster I/O, less noise for %CHECKBIN_* searches)
   Result := Result + ['-g-'];
   Result := Result + ['-CX'];
+  // -vb prints `Linking <output>`, which names the produced binary
+  Result := Result + ['-vb'];
   Result := Result + ['-XX'];
   Result := Result + ['-Xs'];
   // patched copy lives in .tmp/, so the original test dir must be on the include
@@ -415,7 +444,25 @@ function ProducedExePath(const SrcPath, PatchedSrc: String): String;
 begin
   var base := if PatchedSrc <> '' then PatchedSrc else SrcPath;
   Result := IncludeTrailingPathDelimiter(GTempDir) +
-            ChangeFileExt(ExtractFileName(base), '.exe');
+            ChangeFileExt(ExtractFileName(base), GExeExt);
+end;
+
+// binary named by the compiler's `Linking <output>` line (-vb); '' if absent
+function LinkedExePath(const CompilerOut: String): String;
+begin
+  var lines := autofree TStringList.Create;
+  lines.Text := CompilerOut;
+  for var i := 0 to lines.Count - 1 do
+  begin
+    var t := Trim(lines[i]);
+    if not t.StartsWith('Linking ') then continue;
+    Result := Copy(t, 9, MaxInt);
+    // the compiler runs in GBaseDir, so a relative name is relative to it
+    if (ExtractFileDrive(Result) = '') and not IsPathDelimiter(Result, 1) then
+      Result := IncludeTrailingPathDelimiter(GBaseDir) + Result;
+    Exit;
+  end;
+  Result := '';
 end;
 
 // %PRECOMPILE units are compiled next to their source, so the test dir must
@@ -436,10 +483,12 @@ begin
   end;
 end;
 
-procedure CleanupTempArtifacts(const SrcPath, PatchedSrc: String; Failed: Boolean);
+procedure CleanupTempArtifacts(const SrcPath, PatchedSrc, ExePath: String; Failed: Boolean);
 begin
   if GKeepTemp and Failed then Exit;
-  var exts: array of String := ['.exe', '.o', '.ppu', '.lst', '.res', '.compiled', '.rsj'];
+  if (ExePath <> '') and FileExists(ExePath) then
+    DeleteFile(ExePath);
+  var exts: array of String := [GExeExt, '.o', '.ppu', '.lst', '.res', '.compiled', '.rsj'];
   var base := if PatchedSrc <> '' then PatchedSrc else SrcPath;
   var stem := IncludeTrailingPathDelimiter(GTempDir) +
               ChangeFileExt(ExtractFileName(base), '');
@@ -522,7 +571,8 @@ begin
 
   var needsCmdLineMode: Boolean;
   var patched := PreparePatchedSource(SrcPath, needsCmdLineMode);
-  defer CleanupTempArtifacts(SrcPath, patched, R.Verdict = vFail);
+  var exePath := '';
+  defer CleanupTempArtifacts(SrcPath, patched, exePath, R.Verdict = vFail);
 
   var timeoutSec := if R.Flags.Timeout > 0 then R.Flags.Timeout else GTimeoutSec;
 
@@ -609,7 +659,9 @@ begin
     Exit;
   end;
 
-  var exePath := ProducedExePath(SrcPath, patched);
+  exePath := LinkedExePath(compilerOut);
+  if exePath = '' then
+    exePath := ProducedExePath(SrcPath, patched);
 
   // %NORUN or global --norun: don't run, success on compile
   if R.Flags.NoRun or GForceNoRun then
@@ -959,6 +1011,8 @@ begin
   WriteLn;
   WriteLn('options:');
   WriteLn('  --fpc=PATH       override the fpc compiler (default: fpc on PATH)');
+  WriteLn('  --target=NAME    cross-compile for NAME: win32, win64, linux32, linux64,');
+  WriteLn('                   arm64, winarm64 (default: what the compiler reports)');
   WriteLn('  --path=DIR       override testfiles dir (default: testfiles/ next to exe)');
   WriteLn('  --norun          force %NORUN on every test (compile only)');
   WriteLn('  --filter=SUBSTR  run only tests whose path contains SUBSTR');
@@ -1001,6 +1055,7 @@ begin
     var a := ParamStr(i);
     match
       a.StartsWith('--fpc='):    GCompilerPath := Copy(a, 7, MaxInt);
+      a.StartsWith('--target='): GTargetName := Copy(a, 10, MaxInt);
       a.StartsWith('--path='):   GPathOverride := Copy(a, 8, MaxInt);
       a = '--norun':             GForceNoRun := true;
       a.StartsWith('--filter='):  GFilter := Copy(a, 10, MaxInt);
@@ -1023,6 +1078,12 @@ begin
       _:                         WriteLn('warning: unknown argument: ', a);
     end;
   end;
+end;
+
+// header line; values line up after the longest key ('only-failed:')
+procedure Info(const Key, Value: String);
+begin
+  WriteLn(PadRight(Key + ':', 12), ' ', Value);
 end;
 
 procedure Main;
@@ -1052,14 +1113,24 @@ begin
   if GCompilerPath = '' then
     GCompilerPath := CompilerDefault;
 
-  // compile for whatever target the compiler reports via -iTO/-iTP, so cross
-  // compilers (e.g. ppcross386) get a matching -T/-P pair
-  if not QueryCompilerInfo('-iTO', GTargetOS) or
-     not QueryCompilerInfo('-iTP', GTargetCPU) then
+  // --target picks the -T/-P pair from the table; otherwise compile for
+  // whatever target the compiler reports via -iTO/-iTP, so cross compilers
+  // (e.g. ppcross386) get a matching pair
+  if GTargetName <> '' then
+  begin
+    if not FindTarget(GTargetName, GTargetCPU, GTargetOS) then
+    begin
+      WriteLn(AnsiRed, 'error: no cpu+os pair known for target: ', GTargetName, AnsiReset);
+      Halt(2);
+    end;
+  end
+  else if not QueryCompilerInfo('-iTO', GTargetOS) or
+          not QueryCompilerInfo('-iTP', GTargetCPU) then
   begin
     WriteLn(AnsiRed, 'error: cannot query target OS/CPU from compiler: ', GCompilerPath, AnsiReset);
     Halt(2);
   end;
+  GExeExt := if GTargetOS.StartsWith('win') then '.exe' else '';
 
   if not DirectoryExists(GTestfilesDir) then
   begin
@@ -1078,14 +1149,14 @@ begin
     Halt(0);
   end;
 
-  WriteLn('compiler: ', GCompilerPath);
-  WriteLn('target: ', GTargetCPU, '-', GTargetOS);
-  WriteLn('tests dir: ', GTestfilesDir);
-  WriteLn('discovered ', files.Count, ' test file(s)');
+  Info('compiler', GCompilerPath);
+  Info('target', GTargetCPU + '-' + GTargetOS);
+  Info('tests dir', GTestfilesDir);
+  Info('discovered', IntToStr(files.Count) + ' test file(s)');
   if GFilter <> '' then
-    WriteLn('filter: ', GFilter);
+    Info('filter', GFilter);
   if GExclude <> '' then
-    WriteLn('exclude: ', GExclude);
+    Info('exclude', GExclude);
   if GOnlyFailed then
   begin
     var failedPaths := autofree TStringList.Create;
@@ -1104,12 +1175,12 @@ begin
       if failedPaths.IndexOf(rel) < 0 then
         files.Delete(i);
     end;
-    WriteLn('only-failed: ', files.Count, ' (of ', before, ' discovered, ',
-            failedPaths.Count, ' in fail.log)');
+    Info('only-failed', Format('%d (of %d discovered, %d in fail.log)',
+         [files.Count, before, failedPaths.Count]));
   end;
   if (GLimit > 0) and (files.Count > GLimit) then
   begin
-    WriteLn('limit: ', GLimit, ' (of ', files.Count, ')');
+    Info('limit', Format('%d (of %d)', [GLimit, files.Count]));
     while files.Count > GLimit do
       files.Delete(files.Count - 1);
   end;
@@ -1120,9 +1191,9 @@ begin
     Halt(0);
   end;
   if GForceNoRun then
-    WriteLn('mode: --norun (compile only)');
+    Info('mode', '--norun (compile only)');
   if GParallel > 1 then
-    WriteLn('parallel: ', GParallel, ' workers');
+    Info('parallel', IntToStr(GParallel) + ' workers');
   WriteLn;
 
   SetLength(GResults, files.Count);
@@ -1149,10 +1220,12 @@ begin
           (if failed = 0 then AnsiGray else AnsiRed), failed, ' failed', AnsiReset,
           (if skipped > 0 then ', ' + AnsiYellow + IntToStr(skipped) + ' skipped' + AnsiReset else ''),
           ' (', totalMs, ' ms)');
-  WriteLn('logs: ', IncludeTrailingPathDelimiter(GBaseDir), TestsLogName);
+  // with a fail log both keys right-align to the longer 'fail log:'
+  var logKey := if failed > 0 then PadLeft('log:', 9) else 'log:';
+  WriteLn(logKey, ' ', IncludeTrailingPathDelimiter(GBaseDir), TestsLogName);
   if failed > 0 then
   begin
-    WriteLn('     ', IncludeTrailingPathDelimiter(GBaseDir), FailLogName);
+    WriteLn('fail log: ', IncludeTrailingPathDelimiter(GBaseDir), FailLogName);
     Halt(1);
   end;
 end;
