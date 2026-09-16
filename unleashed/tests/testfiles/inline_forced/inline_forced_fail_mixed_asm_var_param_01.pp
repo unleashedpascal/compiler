@@ -1,4 +1,4 @@
-{ %FAIL }
+{ %FAIL %CPU=i386,x86_64 }
 program inline_forced_fail_mixed_asm_var_param_01;
 {$mode unleashed}
 {$asmmode intel}
