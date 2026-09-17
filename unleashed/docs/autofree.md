@@ -138,7 +138,7 @@ A constructor that raises does not double-free: FPC's normal auto-destroy on fai
 ### Restrictions
 
 - The expression must yield a class derived from `TObject` (`` `autofree` requires a class type derived from TObject ``).
-- The LHS must be a plain local or inline variable - fields, globals, array elements, and dereferences are rejected, because the cleanup is scoped to the routine and freeing something whose lifetime exceeds it would be wrong.
+- The LHS must be a plain local or inline variable - fields, globals, parameters, array elements, and dereferences are rejected, because the cleanup is scoped to the routine and freeing something whose lifetime exceeds it would be wrong. The one exception is a global assigned in the main program block or in a unit's `initialization` or `finalization` section, which share the global's lifetime.
 - Not allowed as a function-call argument (`foo(autofree T.Create)`) - assign to a local first.
 
 ## Scoped `with`

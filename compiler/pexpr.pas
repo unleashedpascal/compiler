@@ -7677,8 +7677,13 @@ implementation
         chain_stat   : tstatementnode;
         defer_node   : tdefernode;
       begin
-        // require a simple variable load on the LHS
-        if lhs.nodetype <> loadn then
+        // require a local variable on the LHS; a global is only accepted in
+        // the program/unit init and final bodies, whose lifetime it shares
+        if (lhs.nodetype <> loadn) or
+           not ((tloadnode(lhs).symtableentry.typ = localvarsym) or
+                ((tloadnode(lhs).symtableentry.typ = staticvarsym) and
+                 (current_procinfo.procdef.proctypeoption in
+                  [potype_proginit,potype_unitinit,potype_unitfinalize]))) then
           begin
             Message(parser_e_autofree_lhs_must_be_local);
             exit(cassignmentnode.create(lhs, rhs));
