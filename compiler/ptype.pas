@@ -50,7 +50,7 @@ interface
     procedure add_tuple_field(recdef:trecorddef;const fname:TIDString;ftype:tdef);
     { parses a tuple type after `(` was consumed; false (nothing consumed)
       when the tokens do not form one. Exported for pgenutil }
-    function try_consume_tuple_type(out def:tdef):boolean;
+    function try_consume_tuple_type(out def:tdef;genericdef:tstoreddef;genericlist:tfphashobjectlist):boolean;
     { bracket a structured type definition; end_struct_decl redoes the layout
       of tuples parsed inside it (see make_tuple_recdef) }
     procedure begin_struct_decl;
@@ -584,7 +584,7 @@ implementation
                  if m_tuples in current_settings.modeswitches then
                    begin
                      consume(_LKLAMMER);
-                     if not try_consume_tuple_type(def) then
+                     if not try_consume_tuple_type(def,nil,nil) then
                        begin
                          Message(parser_e_tuple_needs_type);
                          { skip remaining tokens to ) }
@@ -850,13 +850,11 @@ implementation
 
 
     { parses a positional tuple body after _LKLAMMER was consumed }
-    function positional_tuple_type:tdef;
+    function positional_tuple_type(recdef:trecorddef):tdef;
       var
-        recdef     : trecorddef;
         elemdef    : tdef;
         fieldcount : longint;
       begin
-        recdef:=make_tuple_recdef;
         fieldcount:=0;
         repeat
           inc(fieldcount);
@@ -879,16 +877,14 @@ implementation
 
     { parses a named tuple body after _LKLAMMER was consumed.
       Syntax: name (, name)* : type (; name (, name)* : type)* ) }
-    function named_tuple_type:tdef;
+    function named_tuple_type(recdef:trecorddef):tdef;
       var
-        recdef  : trecorddef;
         grouptype : tdef;
         groupnames : array of TIDString;
         groupcount : longint;
         totalfields : longint;
         i : longint;
       begin
-        recdef:=make_tuple_recdef;
         totalfields:=0;
         setlength(groupnames,4);
         repeat
@@ -922,32 +918,84 @@ implementation
       end;
 
 
+    { parses a tuple body after _LKLAMMER was consumed into a fresh record.
+      genericdef/genericlist are those of read_named_type: a generic tuple
+      alias, or a specialization of one, keeps its type parameters in the
+      tuple's own symtable like a generic array does }
+    function tuple_type(named:boolean;genericdef:tstoreddef;genericlist:tfphashobjectlist):tdef;
+      var
+        recdef : trecorddef;
+        old_current_structdef : tabstractrecorddef;
+        old_current_genericdef,
+        old_current_specializedef : tstoreddef;
+        old_parse_generic : boolean;
+      begin
+        recdef:=make_tuple_recdef;
+        old_current_structdef:=current_structdef;
+        old_current_genericdef:=current_genericdef;
+        old_current_specializedef:=current_specializedef;
+        old_parse_generic:=parse_generic;
+        if assigned(genericlist) then
+          begin
+            if assigned(genericdef) then
+              current_specializedef:=recdef
+            else
+              current_genericdef:=recdef;
+            { the type parameters are strict private members of the tuple,
+              so lookups inside the body need it as the context struct }
+            current_structdef:=recdef;
+            symtablestack.push(recdef.symtable);
+            insert_generic_parameter_types(recdef,genericdef,genericlist,false);
+            if old_parse_generic then
+              include(recdef.defoptions,df_generic);
+            parse_generic:=(df_generic in recdef.defoptions);
+            if parse_generic and not assigned(current_genericdef) then
+              current_genericdef:=old_current_genericdef;
+          end;
+        if named then
+          result:=named_tuple_type(recdef)
+        else
+          result:=positional_tuple_type(recdef);
+        if assigned(genericlist) then
+          begin
+            symtablestack.pop(recdef.symtable);
+            parse_generic:=old_parse_generic;
+            current_structdef:=old_current_structdef;
+            current_genericdef:=old_current_genericdef;
+            current_specializedef:=old_current_specializedef;
+          end;
+      end;
+
+
     { orchestrator for tuple parsing after _LKLAMMER was consumed. Returns
       true and sets def if a tuple was parsed; false means caller should
       try to parse the construct as something else (an anonymous enum).
       Uses scanner token recording/replay to peek past identifier lists
       before committing to the tuple path. }
-    function try_consume_tuple_type(out def:tdef):boolean;
+    function try_consume_tuple_type(out def:tdef;genericdef:tstoreddef;genericlist:tfphashobjectlist):boolean;
       var
         srsym : tsym;
         srsymtable : tsymtable;
         buf : tdynamicarray;
-        istype : boolean;
+        istype,named : boolean;
       begin
         def:=nil;
         case current_scanner.token of
           _STRING,_FILE,_ARRAY,_RECORD,_CARET,_SET,_PACKED,_BITPACKED:
             begin
-              def:=positional_tuple_type;
+              def:=tuple_type(false,genericdef,genericlist);
               exit(true);
             end;
           _ID:
             { searchsym_type also returns consts and vars, so check the symbol
               really names a type before committing to the tuple path. a type
               name may still be a field name (`(text: string; n: integer)`),
-              so the `name [, name]:` peek below decides for it too }
-            istype:=searchsym_type(current_scanner.pattern,srsym,srsymtable) and
-               (srsym.typ in [typesym,unitsym,namespacesym]);
+              so the `name [, name]:` peek below decides for it too. a type
+              parameter of the tuple itself is not in scope yet, so it is
+              looked up in the parameter list }
+            istype:=(searchsym_type(current_scanner.pattern,srsym,srsymtable) and
+               (srsym.typ in [typesym,unitsym,namespacesym])) or
+               (assigned(genericlist) and assigned(genericlist.find(current_scanner.pattern)));
           else
             exit(false);
         end;
@@ -957,44 +1005,28 @@ implementation
           recording would internalerror, so assume named tuple and let the
           named parser surface a clear error if we guessed wrong. }
         if current_scanner.is_recording_tokens then
-          begin
-            if istype then
-              def:=positional_tuple_type
-            else
-              def:=named_tuple_type;
-            exit(true);
-          end;
-
-        buf:=tdynamicarray.create(64);
-        current_scanner.startrecordtokens(buf);
-        while current_scanner.token=_ID do
-          begin
-            consume(_ID);
-            if current_scanner.token<>_COMMA then
-              break;
-            consume(_COMMA);
-          end;
-        current_scanner.stoprecordtokens;
-
-        if current_scanner.token=_COLON then
-          begin
-            current_scanner.startreplaytokens(buf,false);
-            def:=named_tuple_type;
-            result:=true;
-          end
+          named:=not istype
         else
           begin
-            { not a named tuple - replay; a type name starts a positional
-              tuple, anything else falls through to enum parsing }
-            current_scanner.startreplaytokens(buf,false);
-            if istype then
+            buf:=tdynamicarray.create(64);
+            current_scanner.startrecordtokens(buf);
+            while current_scanner.token=_ID do
               begin
-                def:=positional_tuple_type;
-                result:=true;
-              end
-            else
-              result:=false;
+                consume(_ID);
+                if current_scanner.token<>_COMMA then
+                  break;
+                consume(_COMMA);
+              end;
+            current_scanner.stoprecordtokens;
+            named:=current_scanner.token=_COLON;
+            current_scanner.startreplaytokens(buf,false);
+            { not a named tuple - a type name starts a positional tuple,
+              anything else falls through to enum parsing }
+            if not named and not istype then
+              exit(false);
           end;
+        def:=tuple_type(named,genericdef,genericlist);
+        result:=true;
       end;
 
 
@@ -2559,7 +2591,7 @@ implementation
                 { try tuple parsing first when TUPLES modeswitch is on;
                   fall through to enum parsing if it turns out not to be one }
                 if (not (m_tuples in current_settings.modeswitches)) or
-                   (not try_consume_tuple_type(def)) then
+                   (not try_consume_tuple_type(def,genericdef,genericlist)) then
                   begin
                 first:=true;
                 { allow negativ value_str }

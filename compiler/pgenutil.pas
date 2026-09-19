@@ -697,7 +697,7 @@ uses
         if current_scanner.token=_LKLAMMER then
           begin
             consume(_LKLAMMER);
-            if not try_consume_tuple_type(def) then
+            if not try_consume_tuple_type(def,nil,nil) then
               begin
                 result:=comp_expr([ef_accept_equal]);
                 consume(_RKLAMMER);

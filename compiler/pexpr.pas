@@ -445,7 +445,7 @@ implementation
                      fsym:=tfieldvarsym(sym);
                      sub:=csubscriptnode.create(fsym,cur.left.getcopy);
                      { separator between fields (before non-first) }
-                     if i>0 then
+                     if assigned(first_new) then
                        first_new:=ccallparanode.create(
                          cstringconstnode.createstr(', '),
                          first_new);
