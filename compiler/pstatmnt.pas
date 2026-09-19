@@ -5573,16 +5573,16 @@ implementation
           begin
             if not assigned(targets[i]) then
               continue;
-            if (targets[i].nodetype=loadn) and
-               (tloadnode(targets[i]).symtableentry.typ in [localvarsym,staticvarsym,paravarsym]) then
-              tabstractnormalvarsym(tloadnode(targets[i]).symtableentry).varstate:=vs_initialised;
             addstatement(laststmt,
               cassignmentnode.create(
                 targets[i],
                 csubscriptnode.create(fieldsyms[i],ctemprefnode.create(tempnode))));
           end;
         addstatement(laststmt,ctempdeletenode.create_normal_temp(tempnode));
+        { typecheck now so the targets count as written before the next
+          statement is parsed, as a plain assignment would }
         result:=blk;
+        do_typecheckpass(result);
       end;
 
     { peeks whether the token after a leading `sync` identifier can start a
