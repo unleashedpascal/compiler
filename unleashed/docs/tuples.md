@@ -165,12 +165,50 @@ type
 
 Two tuples of matching shape (same field count, same types in order) are compatible. If either side is positional, field names are not checked - so a positional literal `(10, 20)` assigns to a named tuple `(a, b: integer)` of the same shape. Two named tuples with different names stay distinct. Tuples are also structurally compatible with regular records of the same shape when either side carries the tuple flag.
 
+Only the instance fields of a record take part in the match. Methods, class vars, nested types and constants declared in the record are ignored, so a record with a method still takes a tuple literal of its field shape:
+
+```pascal
+type
+  TPoint = record
+    x, y: integer;
+    function len: double;
+  end;
+
+var p: TPoint := (3, 4);   // two fields, two values; `len` does not count
+```
+
 ## Generics
 
 ```pascal
 function makePair<A, B>(x: A; y: B): (A, B);
 function zip<A, B>(const xs: array of A; const ys: array of B): array of (A, B);
 ```
+
+### Generic tuple aliases
+
+A generic type declaration may be a tuple. The type parameters are field types; every specialization is an ordinary tuple with the same field names:
+
+```pascal
+type
+  TPair<A, B> = (left: A; right: B);
+  TPos<A, B> = (A, B);
+
+function pairUp<A, B>(const x: A; const y: B): TPair<A, B>;
+begin
+  result := (x, y);
+end;
+
+function swap<A, B>(const p: TPair<A, B>): TPair<B, A>;
+begin
+  result := (p.right, p.left);
+end;
+
+var p: TPair<integer, string> := (left: 7, right: 'seven');
+var (n, s) := swap<integer, string>(p);   // n: string, s: integer
+var q: TPos<double, boolean> := (1.5, true);
+```
+
+A specialization behaves like the tuple it expands to: literals, destructuring, `exit` sugar, comparison and `writeln()` all work on it, and `TPair<integer, string>` is compatible with `(left: integer; right: string)` and with `(integer, string)` under the usual shape rules. The alias may live in another unit and be specialized from its PPU.
 
 A tuple type is also accepted directly as a specialization argument, no alias needed:
 
