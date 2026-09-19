@@ -194,6 +194,7 @@ interface
     function equal_genfunc_paradefs(fwdef,currdef:tdef;fwpdst,currpdst:tsymtable):boolean;
 
     function tuples_have_equal_shape(a,b:trecorddef):boolean;
+    function next_tuple_field(list:tfphashobjectlist;var idx:longint):tsym;
 
 
 implementation
@@ -217,6 +218,28 @@ implementation
       end;
 
 
+    { true for an instance field of a record; methods, class vars, nested
+      types and generic parameters share the symtable but carry no value }
+    function is_tuple_field(sym:tsym):boolean;
+      begin
+        result:=(sym.typ=fieldvarsym) and not (sp_static in sym.symoptions);
+      end;
+
+
+    { the next instance field of the symbol list at or after idx, nil when
+      there is none; idx is left just past the returned field }
+    function next_tuple_field(list:tfphashobjectlist;var idx:longint):tsym;
+      begin
+        result:=nil;
+        while idx<list.count do
+          begin
+            inc(idx);
+            if is_tuple_field(tsym(list[idx-1])) then
+              exit(tsym(list[idx-1]));
+          end;
+      end;
+
+
     { true if a tuple record uses auto-generated _1, _2, _3 ... field names }
     function is_positional_tuple(t:trecorddef):boolean;
       var
@@ -228,7 +251,7 @@ implementation
         for i:=0 to t.symtable.symlist.count-1 do
           begin
             sym:=tsym(t.symtable.symlist[i]);
-            if sym.typ<>fieldvarsym then
+            if not is_tuple_field(sym) then
               continue;
             inc(idx);
             if sym.name<>'_'+tostr(idx) then
@@ -245,29 +268,28 @@ implementation
     function tuples_have_equal_shape(a,b:trecorddef):boolean;
       var
         lista,listb : tfphashobjectlist;
-        i : longint;
+        ia,ib : longint;
         fa,fb : tfieldvarsym;
         ignore_names : boolean;
       begin
         result:=false;
         lista:=a.symtable.symlist;
         listb:=b.symtable.symlist;
-        if lista.count<>listb.count then
-          exit;
         ignore_names:=is_positional_tuple(a) or is_positional_tuple(b);
-        for i:=0 to lista.count-1 do
-          begin
-            if (tsym(lista[i]).typ<>fieldvarsym) or
-               (tsym(listb[i]).typ<>fieldvarsym) then
-              exit;
-            fa:=tfieldvarsym(lista[i]);
-            fb:=tfieldvarsym(listb[i]);
-            if (not ignore_names) and (fa.name<>fb.name) then
-              exit;
-            if not equal_defs(fa.vardef,fb.vardef) then
-              exit;
-          end;
-        result:=true;
+        ia:=0;
+        ib:=0;
+        repeat
+          fa:=tfieldvarsym(next_tuple_field(lista,ia));
+          fb:=tfieldvarsym(next_tuple_field(listb,ib));
+          if not assigned(fa) or not assigned(fb) then
+            break;
+          if (not ignore_names) and (fa.name<>fb.name) then
+            exit;
+          if not equal_defs(fa.vardef,fb.vardef) then
+            exit;
+        until false;
+        { both lists must run out together }
+        result:=not assigned(fa) and not assigned(fb);
       end;
 
 
@@ -276,29 +298,27 @@ implementation
     function tuples_have_convertible_shape(a,b:trecorddef):boolean;
       var
         lista,listb : tfphashobjectlist;
-        i : longint;
+        ia,ib : longint;
         fa,fb : tfieldvarsym;
         ignore_names : boolean;
       begin
         result:=false;
         lista:=a.symtable.symlist;
         listb:=b.symtable.symlist;
-        if lista.count<>listb.count then
-          exit;
         ignore_names:=is_positional_tuple(a) or is_positional_tuple(b);
-        for i:=0 to lista.count-1 do
-          begin
-            if (tsym(lista[i]).typ<>fieldvarsym) or
-               (tsym(listb[i]).typ<>fieldvarsym) then
-              exit;
-            fa:=tfieldvarsym(lista[i]);
-            fb:=tfieldvarsym(listb[i]);
-            if (not ignore_names) and (fa.name<>fb.name) then
-              exit;
-            if compare_defs(fa.vardef,fb.vardef,nothingn)<te_convert_l6 then
-              exit;
-          end;
-        result:=true;
+        ia:=0;
+        ib:=0;
+        repeat
+          fa:=tfieldvarsym(next_tuple_field(lista,ia));
+          fb:=tfieldvarsym(next_tuple_field(listb,ib));
+          if not assigned(fa) or not assigned(fb) then
+            break;
+          if (not ignore_names) and (fa.name<>fb.name) then
+            exit;
+          if compare_defs(fa.vardef,fb.vardef,nothingn)<te_convert_l6 then
+            exit;
+        until false;
+        result:=not assigned(fa) and not assigned(fb);
       end;
 
 

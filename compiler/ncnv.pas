@@ -2962,7 +2962,7 @@ implementation
         stmt : tstatementnode;
         srctemp,dsttemp : ttempcreatenode;
         srcdef,dstdef : trecorddef;
-        i : longint;
+        si,di : longint;
         srcsym,dstsym : tsym;
       begin
         srcdef:=trecorddef(left.resultdef);
@@ -2974,18 +2974,19 @@ implementation
         left:=nil;
         dsttemp:=ctempcreatenode.create(dstdef,dstdef.size,tt_persistent,true);
         addstatement(stmt,dsttemp);
-        { fields line up by index, checked by tuples_have_convertible_shape }
-        for i:=0 to srcdef.symtable.symlist.count-1 do
-          begin
-            srcsym:=tsym(srcdef.symtable.symlist[i]);
-            dstsym:=tsym(dstdef.symtable.symlist[i]);
-            if srcsym.typ<>fieldvarsym then
-              continue;
-            addstatement(stmt,
-              cassignmentnode.create(
-                csubscriptnode.create(tfieldvarsym(dstsym),ctemprefnode.create(dsttemp)),
-                csubscriptnode.create(tfieldvarsym(srcsym),ctemprefnode.create(srctemp))));
-          end;
+        { fields line up by position, checked by tuples_have_convertible_shape }
+        si:=0;
+        di:=0;
+        repeat
+          srcsym:=next_tuple_field(srcdef.symtable.symlist,si);
+          dstsym:=next_tuple_field(dstdef.symtable.symlist,di);
+          if not assigned(srcsym) then
+            break;
+          addstatement(stmt,
+            cassignmentnode.create(
+              csubscriptnode.create(tfieldvarsym(dstsym),ctemprefnode.create(dsttemp)),
+              csubscriptnode.create(tfieldvarsym(srcsym),ctemprefnode.create(srctemp))));
+        until false;
         addstatement(stmt,ctempdeletenode.create(srctemp));
         addstatement(stmt,ctempdeletenode.create_normal_temp(dsttemp));
         addstatement(stmt,ctemprefnode.create(dsttemp));
