@@ -2137,18 +2137,48 @@ implementation
             end;
 
 
-          { true when cthreads is pulled in by this module, directly or
-            through any used unit }
-          function cthreads_loaded : boolean;
+          { true when cthreads is the first unit the program names in its
+            uses clause, following the first unit of that unit and so on:
+            a unit is initialized after its dependencies, so a unit that
+            names cthreads first counts as well. Units the compiler loads
+            ahead of the uses clause (system, objpas, `-Fa`) are skipped;
+            the program lists them without in_uses, and that set serves a
+            unit read from its PPU too, which carries no such marks }
+          function cthreads_first : boolean;
+
+            function injected(u : tmodule) : boolean;
+              var
+                pu : tused_unit;
+              begin
+                pu:=tused_unit(current_module.used_units.first);
+                while assigned(pu) do
+                  begin
+                    if pu.u=u then
+                      exit(not pu.in_uses);
+                    pu:=tused_unit(pu.next);
+                  end;
+                result:=false;
+              end;
+
             var
-              hp : tmodule;
+              m : tmodule;
+              hp : tused_unit;
+              steps : longint;
             begin
-              hp:=tmodule(loaded_units.first);
-              while assigned(hp) do
+              m:=current_module;
+              { a chain longer than the loaded units has looped }
+              for steps:=0 to loaded_units.count do
                 begin
-                  if hp.modulename^='CTHREADS' then
+                  hp:=tused_unit(m.used_units.first);
+                  while assigned(hp) and
+                        (hp.u.modulename^<>'CTHREADS') and
+                        injected(hp.u) do
+                    hp:=tused_unit(hp.next);
+                  if not assigned(hp) then
+                    exit(false);
+                  if hp.u.modulename^='CTHREADS' then
                     exit(true);
-                  hp:=tmodule(hp.next);
+                  m:=hp.u;
                 end;
               result:=false;
             end;
@@ -2528,7 +2558,7 @@ implementation
                                            systems_solaris+systems_aix+systems_android then
                     if current_module.is_unit then
                       Message(parser_h_parallel_for_needs_cthreads)
-                    else if not cthreads_loaded then
+                    else if not cthreads_first then
                       Message(parser_w_parallel_for_needs_cthreads);
                   oldsymstack:=symtablestack;
                   symtablestack:=nil;

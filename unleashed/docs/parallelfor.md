@@ -128,7 +128,7 @@ for parallel := 1 to 5 do ... // ordinary sequential loop over `parallel`
 
 ## Threading driver
 
-The pool uses `BeginThread()` / `WaitForThreadTerminate()` from the `system` unit. Windows works as-is. On Unix put `cthreads` first in the program's `uses` (the compiler reminds you once per module with a hint) - otherwise thread creation fails at run time, like any threaded FPC program. A worker that fails to spawn at run time is simply skipped: its share of iterations drains through the workers that did start, worst case the caller alone.
+The pool uses `BeginThread()` / `WaitForThreadTerminate()` from the `system` unit. Windows works as-is. On Unix put `cthreads` first in the program's `uses` - otherwise thread creation fails at run time, like any threaded FPC program. The compiler checks this once per program and warns when `cthreads` is not the first unit named. A unit is initialized after its dependencies, so the check follows the first unit of the first unit: a program whose first unit itself names `cthreads` first passes, and so does one that loads the driver ahead of `uses` with `-Facthreads`. A unit cannot see the program's `uses`, so `for parallel` inside a unit gets a hint instead. A worker that fails to spawn at run time is simply skipped: its share of iterations drains through the workers that did start, worst case the caller alone.
 
 ## Errors and edge cases
 

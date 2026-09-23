@@ -2038,9 +2038,13 @@ parser_e_async_no_open_array_param=03455_E_`async` cannot pass an open array par
 % or declare the parameter as a dynamic array.
 %
 parser_w_parallel_for_needs_cthreads=03459_W_`for parallel` needs a threading driver on this target - put `cthreads` first in the program uses clause
-% Same as the hint above, emitted in a program whose uses clause, directly or
-% through any used unit, does not pull in \var{cthreads}. Without it the first
-% spawned worker fails at run time with error 232.
+% Same as the hint above, emitted in a program that does not name
+% \var{cthreads} first in its uses clause. The first unit of the first unit
+% is followed, so a unit that names \var{cthreads} first counts, as does
+% loading it ahead of the uses clause with \var{-Fa}. Without the driver the
+% first spawned worker fails at run time with error 232; a driver initialized
+% after a unit that already touched threading stops the program at startup
+% with error 211.
 %
 % \end{description}
 %
