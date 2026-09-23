@@ -19,7 +19,7 @@ program taste;
 
 {$mode unleashed}
 
-uses Classes, SysUtils;
+uses {$ifdef LINUX}cthreads, {$endif}Classes, SysUtils;
 
 // statement expression: if as a value
 function fib(n: integer): int64;

@@ -2137,6 +2137,23 @@ implementation
             end;
 
 
+          { true when cthreads is pulled in by this module, directly or
+            through any used unit }
+          function cthreads_loaded : boolean;
+            var
+              hp : tmodule;
+            begin
+              hp:=tmodule(loaded_units.first);
+              while assigned(hp) do
+                begin
+                  if hp.modulename^='CTHREADS' then
+                    exit(true);
+                  hp:=tmodule(hp.next);
+                end;
+              result:=false;
+            end;
+
+
           { Parse `for parallel [(N)] var i [: T] := lo to|downto hi [step s] do
             body`. `parallel` has already been consumed; the current token is
             `(` or `var`. for-in, a missing inline var, and break/exit/goto in
@@ -2504,10 +2521,15 @@ implementation
               if not assigned(current_module.parfor_thunk_pd) then
                 begin
                   { thread creation on unix-like targets needs the cthreads
-                    driver; remind once per module }
+                    driver; once per module. A program can be checked, a
+                    unit cannot see the program uses clause, so it only
+                    gets a reminder }
                   if target_info.system in systems_linux+systems_bsd+systems_darwin+
                                            systems_solaris+systems_aix+systems_android then
-                    Message(parser_h_parallel_for_needs_cthreads);
+                    if current_module.is_unit then
+                      Message(parser_h_parallel_for_needs_cthreads)
+                    else if not cthreads_loaded then
+                      Message(parser_w_parallel_for_needs_cthreads);
                   oldsymstack:=symtablestack;
                   symtablestack:=nil;
                   thunkpd:=cprocdef.create(normal_function_level,true);

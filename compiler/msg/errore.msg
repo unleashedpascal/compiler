@@ -498,7 +498,7 @@ scan_e_improperly_indented_multiline_string=02120_E_Incorrectly indented multi-l
 #
 # Parser
 #
-# 03458 is the last used one
+# 03459 is the last used one
 #
 % \section{Parser messages}
 % This section lists all parser messages. The parser takes care of the
@@ -1954,6 +1954,7 @@ parser_e_parallel_chunk_must_be_positive=03438_E_`chunk` size must be positive
 parser_h_parallel_for_needs_cthreads=03439_H_`for parallel` needs a threading driver on this target - put `cthreads` first in the program uses clause
 % On Unix-like targets thread creation is provided by the \var{cthreads} unit;
 % without it the first spawned worker fails at run time. Windows needs nothing.
+% Emitted only inside a unit, where the program uses clause is not visible.
 %
 parser_e_sync_requires_classes=03442_E_`sync` requires the Classes unit - add it to the uses clause
 % A \var{sync} block is lowered to a \var{TThread.Synchronize} call, so both
@@ -2036,11 +2037,16 @@ parser_e_async_no_open_array_param=03455_E_`async` cannot pass an open array par
 % taken for the worker thread has nothing to copy. Pass the array itself,
 % or declare the parameter as a dynamic array.
 %
+parser_w_parallel_for_needs_cthreads=03459_W_`for parallel` needs a threading driver on this target - put `cthreads` first in the program uses clause
+% Same as the hint above, emitted in a program whose uses clause, directly or
+% through any used unit, does not pull in \var{cthreads}. Without it the first
+% spawned worker fails at run time with error 232.
+%
 % \end{description}
 %
 # Type Checking
 #
-# 03458 is the last used parser one
+# 03459 is the last used parser one
 #
 # 04143 is the last used one
 #
