@@ -1335,8 +1335,11 @@ implementation
               is_packed_record_or_object(tsubscriptnode(n).left.resultdef) and
               { see above }
               (tsubscriptnode(n).vs.vardef.typ in [orddef,enumdef]) and
-              (not(tsubscriptnode(n).vs.vardef.packedbitsize in [8,16,32,64]) or
-               (tsubscriptnode(n).vs.fieldoffset mod 8 <> 0));
+              (not(tsubscriptnode(n).vs.effective_packedbitsize in [8,16,32,64]) or
+               (tsubscriptnode(n).vs.fieldoffset mod 8 <> 0) or
+               { a byte-sized bit width narrower than the field type is
+                 still a subset load, see the same test in ncgmem }
+               (tsubscriptnode(n).vs.effective_packedbitsize<>tsubscriptnode(n).vs.vardef.size*8));
           else
             result:=false;
         end;
