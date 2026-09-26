@@ -2535,8 +2535,13 @@ implementation
                   ctypeconvnode.create_internal(ccallnode.createintern('ACQUIREEXCEPTIONOBJECT',nil),class_tobject)),
                 nil));
               workerbody:=ctryexceptnode.create(workerloop,nil,workerbody);
+              { the worker is not parsed by read_proc: finish the capturer an
+                `async begin..end` in the body created and rewrite `async` /
+                `await`, in the order parse_body does it }
+              postprocess_capturer(workerpi);
               do_typecheckpass(workerbody);
               workerpi.set_code(workerbody);
+              lower_async(workerpi);
 
               symtablestack.pop(workerpd.localst);
               symtablestack.pop(workerpd.parast);
