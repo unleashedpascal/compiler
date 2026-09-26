@@ -5661,6 +5661,55 @@ implementation
       end;
 
 
+    { a tuple literal keeps an anonymous procedure as a bare statement until
+      the literal meets a declared type (see pexpr); one that did not by the
+      time its statement is parsed stores it into its field now, typed as a
+      function reference. Parse time, so the capturer class the conversion
+      creates still gets its VMT built with the routine }
+    function store_deferred_tuple_fields(var n : tnode;arg : pointer) : foreachnoderesult;
+      var
+        hp : tstatementnode;
+        tempnode : ttempcreatenode;
+        st : tsymtable;
+        fs : tfieldvarsym;
+        i : longint;
+      begin
+        result:=fen_false;
+        if n.nodetype<>blockn then
+          exit;
+        hp:=tstatementnode(tblocknode(n).left);
+        while assigned(hp) and assigned(hp.left) and (hp.left.nodetype=nothingn) do
+          hp:=tstatementnode(hp.right);
+        if not assigned(hp) or not assigned(hp.left) or
+           (hp.left.nodetype<>tempcreaten) or
+           not (df_tuple in ttempcreatenode(hp.left).tempinfo^.typedef.defoptions) then
+          exit;
+        tempnode:=ttempcreatenode(hp.left);
+        st:=trecorddef(tempnode.tempinfo^.typedef).symtable;
+        hp:=tstatementnode(hp.right);
+        while assigned(hp) do
+          begin
+            if assigned(hp.left) and assigned(hp.left.resultdef) and
+               (hp.left.resultdef.typ=procdef) and
+               (po_anonymous in tprocdef(hp.left.resultdef).procoptions) then
+              for i:=0 to st.symlist.count-1 do
+                begin
+                  fs:=tfieldvarsym(st.symlist[i]);
+                  if (fs.typ=fieldvarsym) and (fs.deferredanondef=hp.left.resultdef) then
+                    begin
+                      hp.left:=cassignmentnode.create(
+                        csubscriptnode.create(fs,ctemprefnode.create(tempnode)),
+                        hp.left);
+                      typecheckpass(hp.left);
+                      dec(deferred_tuple_literals);
+                      break;
+                    end;
+                end;
+            hp:=tstatementnode(hp.right);
+          end;
+      end;
+
+
     function statement : tnode;
       var
          p,
@@ -6164,6 +6213,10 @@ implementation
          if assigned(code) then
            begin
              typecheckpass(code);
+             { a tuple literal in this statement that met no declared type
+               keeps its anonymous procedures as function references }
+             if deferred_tuple_literals>0 then
+               foreachnodestatic(code,@store_deferred_tuple_fields,nil);
              code.fileinfo:=filepos;
            end;
          statement:=code;

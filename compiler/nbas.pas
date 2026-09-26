@@ -192,6 +192,13 @@ interface
        end;
        tblocknodeclass = class of tblocknode;
 
+    var
+       { anonymous procedures held by tuple literals that have not met a
+         declared type yet, see store_deferred_tuple_fields in pstatmnt }
+       deferred_tuple_literals : longint;
+
+    type
+
        ttempcreatenode = class;
 
        ttempinfoflag = (

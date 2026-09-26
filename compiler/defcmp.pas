@@ -315,7 +315,14 @@ implementation
             break;
           if (not ignore_names) and (fa.name<>fb.name) then
             exit;
-          if compare_defs(fa.vardef,fb.vardef,nothingn)<te_convert_l6 then
+          { a literal field still holding its anonymous procedure converts
+            like the procedure itself, to a procvar or function reference }
+          if assigned(fa.deferredanondef) then
+            begin
+              if compare_defs(fa.deferredanondef,fb.vardef,loadn)<te_convert_l6 then
+                exit;
+            end
+          else if compare_defs(fa.vardef,fb.vardef,nothingn)<te_convert_l6 then
             exit;
         until false;
         result:=not assigned(fa) and not assigned(fb);

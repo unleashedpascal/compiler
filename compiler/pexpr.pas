@@ -5698,6 +5698,34 @@ implementation
            end;
 
 
+         function is_anon_proc_expr(n:tnode):boolean;
+           begin
+             result:=(n.resultdef.typ=procdef) and
+                     (po_anonymous in tprocdef(n.resultdef).procoptions);
+           end;
+
+         { Adds the statement storing a literal field. An anonymous
+           procedure is not assigned: its conversion has to wait until the
+           literal meets its target type, since a function reference cannot
+           be turned into a plain procvar afterwards. The bare procedure is
+           kept as a statement and the field remembers it; the conversion of
+           the literal (ncnv) binds it to the target's field, or the statement
+           parser (pstatmnt) stores it as a function reference. }
+         procedure add_tuple_field_statement(var laststmt:tstatementnode;tempnode:ttempcreatenode;fieldsym:tfieldvarsym;expr:tnode);
+           begin
+             if is_anon_proc_expr(expr) then
+               begin
+                 fieldsym.deferredanondef:=expr.resultdef;
+                 addstatement(laststmt,expr);
+                 inc(deferred_tuple_literals);
+               end
+             else
+               addstatement(laststmt,
+                 cassignmentnode.create(
+                   csubscriptnode.create(fieldsym,ctemprefnode.create(tempnode)),
+                   expr));
+           end;
+
          { Parses a named tuple literal body after _LKLAMMER was consumed
            and the first token is an identifier starting a 'name:' pair.
            Builds a temp tuple record with user-chosen field names and
@@ -5706,6 +5734,7 @@ implementation
            var
              names : array of TIDString;
              exprs : array of tnode;
+             elemdefs : array of tdef;
              count : longint;
              i : longint;
              recdef : trecorddef;
@@ -5731,13 +5760,20 @@ implementation
                inc(count);
              until not try_to_consume(_COMMA);
              consume(_RKLAMMER);
+             setlength(elemdefs,count);
 
              { promote common literal types }
              for i:=0 to count-1 do
                begin
                  typecheckpass(exprs[i]);
                  elemdef:=exprs[i].resultdef;
-                 if is_integer(elemdef) and
+                 { an anonymous procedure gives the field the function
+                   reference type with its signature, like an inline var
+                   does; the value itself is left unconverted, see
+                   add_tuple_field_statement }
+                 if is_anon_proc_expr(exprs[i]) then
+                   elemdef:=anon_proc_funcref(tprocdef(elemdef))
+                 else if is_integer(elemdef) and
                     (torddef(elemdef).ordtype in [s8bit,u8bit,s16bit,u16bit]) then
                    elemdef:=s32inttype
                  else if is_conststring_array(elemdef) or
@@ -5750,16 +5786,17 @@ implementation
                      else
                        elemdef:=cshortstringtype;
                    end;
-                 if elemdef<>exprs[i].resultdef then
+                 if (elemdef<>exprs[i].resultdef) and not is_anon_proc_expr(exprs[i]) then
                    begin
                      exprs[i]:=ctypeconvnode.create_internal(exprs[i],elemdef);
                      typecheckpass(exprs[i]);
                    end;
+                 elemdefs[i]:=elemdef;
                end;
 
              recdef:=make_tuple_recdef;
              for i:=0 to count-1 do
-               add_tuple_field(recdef,names[i],exprs[i].resultdef);
+               add_tuple_field(recdef,names[i],elemdefs[i]);
              trecordsymtable(recdef.symtable).addalignmentpadding;
 
              blk:=internalstatements(laststmt);
@@ -5768,10 +5805,7 @@ implementation
              for i:=0 to count-1 do
                begin
                  fieldsym:=tsym(trecordsymtable(recdef.symtable).find(upper(names[i])));
-                 addstatement(laststmt,
-                   cassignmentnode.create(
-                     csubscriptnode.create(fieldsym,ctemprefnode.create(tempnode)),
-                     exprs[i]));
+                 add_tuple_field_statement(laststmt,tempnode,tfieldvarsym(fieldsym),exprs[i]);
                end;
              addstatement(laststmt,ctempdeletenode.create_normal_temp(tempnode));
              addstatement(laststmt,ctemprefnode.create(tempnode));
@@ -5787,6 +5821,7 @@ implementation
          function tuple_lit_as_tempref(first_expr:tnode):tnode;
          var
            exprs : array of tnode;
+           elemdefs : array of tdef;
            exprcount : longint;
            i : longint;
            recdef : trecorddef;
@@ -5807,6 +5842,7 @@ implementation
                inc(exprcount);
              end;
            consume(_RKLAMMER);
+           setlength(elemdefs,exprcount);
 
            { promote common literal types so [(1,'a'),(2,'b')] matches
              declared types like array-of-(Integer, String) }
@@ -5814,7 +5850,13 @@ implementation
              begin
                typecheckpass(exprs[i]);
                elemdef:=exprs[i].resultdef;
-               if is_integer(elemdef) and
+               { an anonymous procedure gives the field the function
+                 reference type with its signature, like an inline var
+                 does; the value itself is left unconverted, see
+                 add_tuple_field_statement }
+               if is_anon_proc_expr(exprs[i]) then
+                 elemdef:=anon_proc_funcref(tprocdef(elemdef))
+               else if is_integer(elemdef) and
                   (torddef(elemdef).ordtype in [s8bit,u8bit,s16bit,u16bit]) then
                  elemdef:=s32inttype
                else if is_conststring_array(elemdef) or
@@ -5827,16 +5869,17 @@ implementation
                    else
                      elemdef:=cshortstringtype;
                  end;
-               if elemdef<>exprs[i].resultdef then
+               if (elemdef<>exprs[i].resultdef) and not is_anon_proc_expr(exprs[i]) then
                  begin
                    exprs[i]:=ctypeconvnode.create_internal(exprs[i],elemdef);
                    typecheckpass(exprs[i]);
                  end;
+               elemdefs[i]:=elemdef;
              end;
 
            recdef:=make_tuple_recdef;
            for i:=0 to exprcount-1 do
-             add_tuple_field(recdef,'_'+tostr(i+1),exprs[i].resultdef);
+             add_tuple_field(recdef,'_'+tostr(i+1),elemdefs[i]);
            trecordsymtable(recdef.symtable).addalignmentpadding;
 
            blk:=internalstatements(laststmt);
@@ -5845,10 +5888,7 @@ implementation
            for i:=0 to exprcount-1 do
              begin
                fieldsym:=tsym(trecordsymtable(recdef.symtable).find('_'+tostr(i+1)));
-               addstatement(laststmt,
-                 cassignmentnode.create(
-                   csubscriptnode.create(fieldsym,ctemprefnode.create(tempnode)),
-                   exprs[i]));
+               add_tuple_field_statement(laststmt,tempnode,tfieldvarsym(fieldsym),exprs[i]);
              end;
            addstatement(laststmt,ctempdeletenode.create_normal_temp(tempnode));
            addstatement(laststmt,ctemprefnode.create(tempnode));

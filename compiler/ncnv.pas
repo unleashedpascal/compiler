@@ -2955,6 +2955,31 @@ implementation
       end;
 
 
+    { the bare anonymous procedure a tuple literal block keeps as a statement
+      for the field remembering def (see pexpr); detached when found }
+    function take_deferred_anon(block:tnode;def:tdef):tnode;
+      var
+        stmt : tstatementnode;
+      begin
+        result:=nil;
+        if block.nodetype<>blockn then
+          exit;
+        stmt:=tstatementnode(tblocknode(block).left);
+        while assigned(stmt) do
+          begin
+            if assigned(stmt.left) and (stmt.left.resultdef=def) then
+              begin
+                result:=stmt.left;
+                stmt.left:=cnothingnode.create;
+                typecheckpass(stmt.left);
+                dec(deferred_tuple_literals);
+                exit;
+              end;
+            stmt:=tstatementnode(stmt.right);
+          end;
+      end;
+
+
     { copies the tuple field by field into a temp of the target type; each
       assignment inserts the ordinary conversion for its field }
     function ttypeconvnode.typecheck_tuple_2_tuple : tnode;
@@ -2964,9 +2989,11 @@ implementation
         srcdef,dstdef : trecorddef;
         si,di : longint;
         srcsym,dstsym : tsym;
+        litblock,anonnode : tnode;
       begin
         srcdef:=trecorddef(left.resultdef);
         dstdef:=trecorddef(resultdef);
+        litblock:=left;
         result:=internalstatements(stmt);
         srctemp:=ctempcreatenode.create(srcdef,srcdef.size,tt_persistent,true);
         addstatement(stmt,srctemp);
@@ -2982,10 +3009,18 @@ implementation
           dstsym:=next_tuple_field(dstdef.symtable.symlist,di);
           if not assigned(srcsym) then
             break;
+          { an anonymous procedure the literal still holds converts to the
+            target field directly; a literal already stored in a variable
+            has it as a function reference like any other field }
+          anonnode:=nil;
+          if assigned(tfieldvarsym(srcsym).deferredanondef) then
+            anonnode:=take_deferred_anon(litblock,tfieldvarsym(srcsym).deferredanondef);
+          if not assigned(anonnode) then
+            anonnode:=csubscriptnode.create(tfieldvarsym(srcsym),ctemprefnode.create(srctemp));
           addstatement(stmt,
             cassignmentnode.create(
               csubscriptnode.create(tfieldvarsym(dstsym),ctemprefnode.create(dsttemp)),
-              csubscriptnode.create(tfieldvarsym(srcsym),ctemprefnode.create(srctemp))));
+              anonnode));
         until false;
         addstatement(stmt,ctempdeletenode.create(srctemp));
         addstatement(stmt,ctempdeletenode.create_normal_temp(dsttemp));

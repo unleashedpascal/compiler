@@ -253,6 +253,11 @@ interface
           custom_size    : longint;
           custom_align   : longword;
           custom_bitalign: longword;
+          { the anonymous procedure a tuple literal holds in this field
+            while the literal's target type is still unknown; the value
+            binds to the target's field type at conversion time. never
+            stored in a PPU }
+          deferredanondef : tdef;
 {$ifdef llvm}
           { the llvm version of the record does not support variants,   }
           { so the llvm equivalent field may not be at the exact same   }
