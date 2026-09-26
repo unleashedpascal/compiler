@@ -4239,6 +4239,7 @@ implementation
         var
           outvarsym : tabstractnormalvarsym;
           outvararr : tarraydef;
+          zeronode  : tnode;
         begin
           outvarsym:=tabstractnormalvarsym(tloadnode(pt.left).symtableentry);
           if outvarsym.vardef.typ=errordef then
@@ -4296,6 +4297,16 @@ implementation
                   add_init_statement(cassignmentnode.create(
                     pt.left.getcopy,pt.outvarseed));
                   pt.outvarseed:=nil;
+                end
+              { an ordinal gets the same 0 Default(T) yields, built directly
+                and flagged internal: an enum or subrange whose range does
+                not include 0 must not warn about compiler-generated code }
+              else if outvarsym.vardef.typ in [orddef,enumdef] then
+                begin
+                  zeronode:=cordconstnode.create(0,outvarsym.vardef,false);
+                  include(zeronode.flags,nf_internal);
+                  add_init_statement(cassignmentnode.create(
+                    pt.left.getcopy,zeronode));
                 end
               else if not((outvarsym.vardef.typ=filedef) or
                  ((outvarsym.vardef.typ in [arraydef,recorddef,objectdef]) and
