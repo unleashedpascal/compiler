@@ -850,6 +850,30 @@ implementation
 
 
     { parses a positional tuple body after _LKLAMMER was consumed }
+    { a procedural or `reference to` field type of a tuple needs the same
+      finishing as a record field: the function reference becomes its
+      interface and the calling convention completes the parameter list }
+    procedure finish_tuple_field_type(var def:tdef);
+      begin
+        if ((def.typ=procvardef) or is_funcref(def)) and (def.typesym=nil) then
+          begin
+            if (def.typ=procvardef) and (po_is_function_ref in tprocvardef(def).procoptions) then
+              begin
+                if not (m_function_references in current_settings.modeswitches) and
+                    not (po_is_block in tprocvardef(def).procoptions) then
+                  Message(sym_e_error_in_type_def)
+                else
+                  begin
+                    adjust_funcref(def,nil,nil);
+                    if current_scanner.replay_stack_depth=0 then
+                      def.register_def;
+                  end;
+              end;
+            handle_calling_convention(def,hcc_default_actions_intf);
+          end;
+      end;
+
+
     function positional_tuple_type(recdef:trecorddef):tdef;
       var
         elemdef    : tdef;
@@ -859,6 +883,7 @@ implementation
         repeat
           inc(fieldcount);
           read_anon_type(elemdef,false,nil);
+          finish_tuple_field_type(elemdef);
           add_tuple_field(recdef,'_'+tostr(fieldcount),elemdef);
         until not try_to_consume(_COMMA);
 
@@ -899,6 +924,7 @@ implementation
 
           consume(_COLON);
           read_anon_type(grouptype,false,nil);
+          finish_tuple_field_type(grouptype);
 
           for i:=0 to groupcount-1 do
             add_tuple_field(recdef,groupnames[i],grouptype);
