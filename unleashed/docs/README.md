@@ -48,7 +48,7 @@ Also switched on by `{$mode unleashed}` on top of the `objfpc` base, as supporti
 
 Also turned on automatically with no directive needed: C-style operators (`+=`, `-=`, `*=`, `/=`), `goto` / `label`, and macros (`{$define name := value}`). Each can be switched off locally.
 
-Several features are **unleashed-mode-only with no dedicated modeswitch**: the preserved for-loop counter, `is not` / `not in`, compound assignment and `inc()` / `dec()` on properties, array size shorthand, lazy labels, nested generic methods, `zeroinit`, forced `inline`, `SwapValues()`, and `Type()`. A few work in **every mode** with no switch at all: the word-based compound operators (`div=`, `mod=`, ...), indexed labels, `$embedstr` / `$embedbytes`, and the custom-binary-metadata CLI flags.
+Several features are **unleashed-mode-only with no dedicated modeswitch**: the preserved for-loop counter, compound assignment and `inc()` / `dec()` on properties, array size shorthand, lazy labels, nested generic methods, `zeroinit`, forced `inline`, `SwapValues()`, and `Type()`. A few work in **every mode** with no switch at all: the word-based compound operators (`div=`, `mod=`, ...), indexed labels, `$embedstr` / `$embedbytes`, and the custom-binary-metadata CLI flags.
 
 ### Conditional Defines
 
@@ -228,7 +228,7 @@ Declare a family of labels keyed by ordinal ranges (`label state[0..4]`) or stri
 
 ### [Tweaks](tweaks.md)
 
-Small semantic adjustments that make standard constructs behave the way most people expect, all unleashed-mode-only: the **preserved for-loop counter** (after `for i := 1 to N do ... break;` the counter keeps its value, undefined in stock Pascal), the **`is not` / `not in`** operators (shorthand for the parenthesized negation), and the module switches (`goto`, C-operators, macros) that unleashed turns on automatically.
+Small semantic adjustments that make standard constructs behave the way most people expect: the **preserved for-loop counter** (after `for i := 1 to N do ... break;` the counter keeps its value, undefined in stock Pascal; unleashed-mode-only), the **`is not` / `not in`** operators (shorthand for the parenthesized negation; modeswitch `reorderedoperators`, on by default in unleashed and delphi modes), and the module switches (`goto`, C-operators, macros) that unleashed turns on automatically.
 
 ---
 

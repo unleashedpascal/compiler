@@ -133,7 +133,7 @@ Threads in stock Pascal mean `TThread` subclasses, hand-managed critical section
 Semantic adjustments and small syntax unlocks - full catalog in [tweaks.md](unleashed/docs/tweaks.md) and [extra-improvements.md](unleashed/docs/extra-improvements.md).
 
 - **Preserved For-Loop Counter** - after `for i := 1 to N do ... break;` the counter keeps its value.
-- **`is not` / `not in`** - `if obj is not TFoo then`, `if x not in [a, b] then`.
+- **`is not` / `not in`** - `if obj is not TFoo then`, `if x not in [a, b] then`. Available in FPC since 2026-09-23.
 - **Array Size Shorthand** - `array[10] of T` means `array[0..9] of T`.
 - **`goto`, Macros, C-Operators without Directives** - all implied by the mode.
 - **`DEBUG` / `RELEASE` Defines** - set automatically from `-g`: react to a debug build with `{$ifdef DEBUG}`, no `-dDEBUG` needed.

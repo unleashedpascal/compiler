@@ -1,6 +1,6 @@
 # Tweaks
 
-Small semantic adjustments that make standard Pascal constructs behave the way most people expect them to. None of them have a dedicated modeswitch - they are unleashed-mode-only and turn on with `{$mode unleashed}` (or `-Munleashed`).
+Small semantic adjustments that make standard Pascal constructs behave the way most people expect them to. Most of them have no dedicated modeswitch - they are unleashed-mode-only and turn on with `{$mode unleashed}` (or `-Munleashed`). The `is not` / `not in` operators are the exception: they sit behind the `reorderedoperators` modeswitch, which `unleashed` and `delphi` modes turn on by default.
 
 If you need the standard semantics for a specific routine, switch the mode locally back to `objfpc` / `delphi`.
 
@@ -79,6 +79,9 @@ end;
 
 ## `is not` and `not in` operators
 
+> [!NOTE]
+> Available in FPC mainstream since 2026-09-23
+
 Standard Pascal forces an extra pair of parentheses on negated type checks and membership tests:
 
 ```pascal
@@ -86,7 +89,7 @@ if not (obj is TFoo) then ...
 if not (x in [apple, orange]) then ...
 ```
 
-Unleashed mode accepts the form you say out loud:
+With the `reorderedoperators` modeswitch the compiler accepts the form you say out loud. The switch is on by default in `{$mode unleashed}` and `{$mode delphi}`; any other mode gets it with `{$modeswitch reorderedoperators}`:
 
 ```pascal
 if obj is not TFoo then ...
@@ -95,11 +98,11 @@ if x not in [apple, orange] then ...
 
 Each compiles to exactly the same node tree as the parenthesized form - semantics, error messages, and runtime cost are unchanged.
 
-### What unleashed actually changes
+### What the modeswitch actually changes
 
 Just the parser. When the comparison-level expression sees `is` followed by `not`, it consumes both and wraps the resulting `is` node in a `not` node. The `not in` form is allowed at the comparison level (where `not` is normally a unary prefix only) and parses the right-hand side as the operand of `in`.
 
-Outside unleashed mode the parser rejects both: `obj is not T` is read as `obj is (not T)` and reports an operator error (`Operator is not overloaded: not "Class Of T"`), and `x not in S` is a syntax error at `not`.
+Without the modeswitch the parser rejects both: `obj is not T` is read as `obj is (not T)` and reports an operator error (`Operator is not overloaded: not "Class Of T"`), and `x not in S` is a syntax error at `not`.
 
 ## Default-on switches
 
