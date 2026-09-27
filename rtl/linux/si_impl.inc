@@ -56,5 +56,15 @@ const
         haltproc: nil;
       );
     );
+
+procedure fpc_haltproc(e: longint); cdecl; external name '_haltproc';
+
+{ for rtlInit, which runs without the startup code of this unit }
+function SysInitEntryInfo: PEntryInformation; public name 'FPC_SysInitEntryInfo';
+begin
+  SysInitEntryInformation.OS.stklen:=StackLength;
+  SysInitEntryInformation.OS.haltproc:=@fpc_haltproc;
+  SysInitEntryInfo:=@SysInitEntryInformation;
+end;
 {$endif FPC_HAS_INDIRECT_ENTRY_INFORMATION}
 

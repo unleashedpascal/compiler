@@ -255,6 +255,14 @@ Type  PINTRTLEvent = ^TINTRTLEvent;
       end;
 
 
+    { a thread the host of a static library created: have pthreads run
+      CthreadCleanup when it exits }
+    procedure CStaticLibThreadAttach;
+      begin
+        pthread_setspecific(CleanupKey,pointer(1));
+      end;
+
+
     procedure HookThread;
       begin
         { Allocate local thread vars, this must be the first thing,
@@ -1031,6 +1039,7 @@ begin
 {$endif DEBUG_MT}
   // We assume that if you set the thread manager, the application is multithreading.
   InitCTLS;
+  StaticLibThreadAttach:=@CStaticLibThreadAttach;
 end;
 
 Function CDoneThreads : Boolean;

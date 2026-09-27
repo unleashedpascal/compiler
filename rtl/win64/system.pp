@@ -65,6 +65,9 @@ procedure SetupEntryInformation(constref info: TEntryInformation);forward;
 {$define FPC_SYSTEM_HAS_STACKTOP}
 function main_wrapper(arg: Pointer; proc: Pointer): ptrint; forward;
 
+{ rtlInit/rtlDone live in syswin.inc }
+{$define FPC_SYSTEM_HAS_STATICLIB}
+
 { include system independent routines }
 {$I system.inc}
 

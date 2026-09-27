@@ -65,6 +65,9 @@ asm
    movl  %fs:(4),%eax
 end;
 
+{ rtlInit/rtlDone live in syswin.inc }
+{$define FPC_SYSTEM_HAS_STATICLIB}
+
 { include system independent routines }
 {$I system.inc}
 

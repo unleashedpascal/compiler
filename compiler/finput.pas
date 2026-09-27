@@ -168,6 +168,7 @@ interface
           importlibfilename,        { fullname of the import libraryfile }
           staticlibfilename,        { fullname of the static libraryfile }
           sharedlibfilename,        { fullname of the shared libraryfile }
+          archivefilename,          { fullname of the static library built with `-XA` }
           exportfilename,           { fullname of the export file }
           mapfilename,              { fullname of the mapfile }
           exefilename,              { fullname of the exefile }
@@ -641,11 +642,21 @@ uses
                without one, append `sharedlibext` so the artifact stays usable. }
              if ExtractFileExt(OutputFileName)='' then
                sharedlibfilename:=sharedlibfilename+target_info.sharedlibext;
+             { same rule for the static library: `-o` verbatim, no `lib`
+               prefix, only the extension is appended when missing or
+               replaced when it is the one of an executable or shared
+               library (an IDE names its target that way) }
+             archivefilename:=p+OutputFileName;
+             if (ExtractFileExt(OutputFileName)='') or
+                (lower(ExtractFileExt(OutputFileName))=target_info.sharedlibext) or
+                ((target_info.exeext<>'') and (lower(ExtractFileExt(OutputFileName))=target_info.exeext)) then
+               archivefilename:=p+ChangeFileExt(OutputFileName,target_info.staticlibext);
              n:=ChangeFileExt(OutputFileName,''); { for mapfilename and dbgfilename }
            end
          else
            begin
              exefilename:=p+n+target_info.exeext;
+             archivefilename:=p+n+target_info.staticlibext;
              if Assigned(OutputPrefix) then
                prefix := OutputPrefix^
              else
@@ -672,6 +683,7 @@ uses
 {$endif DEBUG_NODE_XML}
         objfilename:='';
         asmfilename:='';
+        archivefilename:='';
         importlibfilename:='';
         staticlibfilename:='';
         sharedlibfilename:='';

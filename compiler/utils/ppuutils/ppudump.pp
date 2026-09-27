@@ -2430,7 +2430,8 @@ const
         'Assemble on target OS', {cs_assemble_on_target}
         'Use a memory model to support >2GB static data on 64 Bit target', {cs_large}
         'Generate UF2 binary', {cs_generate_uf2}
-        'Link using ld.lld GNU compatible LLVM linker' {cs_link_lld}
+        'Link using ld.lld GNU compatible LLVM linker', {cs_link_lld}
+        'Build a standalone static library' {cs_link_staticlib}
        );
     localswitchname : array[tlocalswitch] of string[50] =
        { Switches which can be changed locally }

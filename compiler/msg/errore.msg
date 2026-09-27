@@ -498,7 +498,7 @@ scan_e_improperly_indented_multiline_string=02120_E_Incorrectly indented multi-l
 #
 # Parser
 #
-# 03459 is the last used one
+# 03460 is the last used one
 #
 % \section{Parser messages}
 % This section lists all parser messages. The parser takes care of the
@@ -2045,12 +2045,15 @@ parser_w_parallel_for_needs_cthreads=03459_W_`for parallel` needs a threading dr
 % first spawned worker fails at run time with error 232; a driver initialized
 % after a unit that already touched threading stops the program at startup
 % with error 211.
+parser_w_staticlib_export_not_c_callable=03460_W_Exported routine "$1" is not callable from C, use cdecl or stdcall
+% A static library is linked into programs written in other languages.
+% Those can only call routines that use a C-compatible calling convention.
 %
 % \end{description}
 %
 # Type Checking
 #
-# 03459 is the last used parser one
+# 03460 is the last used parser one
 #
 # 04143 is the last used one
 #
@@ -3651,7 +3654,7 @@ execinfo_x_stackcommit=09134_X_Stack space committed: $1 bytes
 #
 # Internal linker messages
 #
-# 09224 is the last used one
+# 09228 is the last used one
 #
 # BeginOfTeX
 % \section{Linker messages}
@@ -3720,6 +3723,14 @@ link_w_unsupported_cross_endian_internal_linker=09223_W_Internal linker in cross
 % The internal linker does not correctly handle endianess conversion.
 link_f_executable_too_big_exceeds_X_by_Y_bytes=09224_F_Executable image size is too big for $1 target (exceeds $2 by $3 bytes).
 % The result File is too big
+link_e_staticlib_not_supported=09225_E_Static library output (-XA) is not supported for this target
+% Only targets with an external GNU linker can produce a standalone static library.
+link_e_staticlib_util_not_found=09226_E_Static library output needs $1, install GNU binutils for the target
+% The static library is put together with \var{ld} and \var{objcopy}.
+link_e_staticlib_no_exports=09227_E_A static library needs an exports clause, nothing would stay reachable
+% Everything that is not reachable from an export is dropped from the library.
+link_w_staticlib_shared_dependency=09228_W_The static library depends on shared library "$1", link it into the host program
+% The library uses a shared library that cannot be put into the archive.
 % \end{description}
 # EndOfTeX
 
@@ -4982,6 +4993,7 @@ P*2WT_Specify MPW tool type application (Classic Mac OS)
 **1X_Executable options:
 **2X9_Generate linkerscript for GNU Binutils ld older than version 2.19.1 (Linux)
 **2Xa_Generate code which allows to use more than 2 GB static data on 64 bit targets (Linux)
+**2XA_Build a standalone static library (.a) instead of an executable or shared library (same as --staticlib)
 **2Xc_Pass --shared/-dynamic to the linker (BeOS, Darwin, FreeBSD, Linux)
 **2Xd_Do not search default library path (sometimes required for cross-compiling when not using -XR)
 **2XD_Try to link units dynamically      (defines FPC_LINK_DYNAMIC)
