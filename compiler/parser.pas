@@ -437,6 +437,10 @@ implementation
 
          { Load current state from the init values }
          current_settings:=init_settings;
+         { a verbosity directive of a unit compiled before in this process
+           must not leak into this one: the ppu records the verbosity in the
+           node trees, so the checksum of a unit would depend on it }
+         status.verbosity:=init_settings.verbosity;
 
          set_current_module(module);
          if not (module.state in [ms_compile]) then

@@ -6284,6 +6284,9 @@ begin
   { as stackalign is not part of the alignment record, we do not need to define the others alignments for symmetry yet }
   set_system_macro('FPC_STACKALIGNMENT',tostr(target_info.stackalign));
 
+  { every module starts from the verbosity of the command line, see compile_module }
+  init_settings.verbosity:=status.verbosity;
+
   option.free;
   Option:=nil;
 
