@@ -2082,7 +2082,10 @@ var
                   end;
               end;
 
-            check_crc:=crc_final and (m.fromppu or (m.state in [ms_compiled,ms_processed]));
+            { a dependent compiled with -Ur only checks the interface crcs }
+            check_crc:=crc_final and
+                       {$IFNDEF DisableUrCRC}not (mf_release in m.moduleflags) and{$ENDIF}
+                       (m.fromppu or (m.state in [ms_compiled,ms_processed]));
             uu:=tused_unit(m.used_units.First);
             while assigned(uu) do
               begin
@@ -2300,9 +2303,12 @@ var
       begin
         if pu.u.crc_final then
         begin
+          { a unit compiled with -Ur only checks the interface crcs, as in
+            load_usedunits_section }
           if (pu.u.interface_crc<>pu.interface_checksum)
               or (pu.u.indirect_crc<>pu.indirect_checksum)
-              or (pu.u.crc<>pu.checksum) then
+              or ({$IFNDEF DisableUrCRC}not (mf_release in moduleflags) and{$ENDIF}
+                  (pu.u.crc<>pu.checksum)) then
           begin
             {$ifdef DEBUG_UNIT_CRC_CHANGES}
             Comment(V_Normal,'  implcrc change: '+hexstr(pu.u.crc,8)+' for '+pu.u.ppufilename+' <> '+hexstr(pu.checksum,8)+' in unit '+realmodulename^);
