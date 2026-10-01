@@ -3076,6 +3076,8 @@ type
                hs:=version_string;
              'FPCFULLVERSION':
                hs:=full_version_string;
+             'FPCIDENT':
+               hs:=compiler_ident_string;
              'FPCDATE':
                hs:=date_string;
              'FPCTARGET':

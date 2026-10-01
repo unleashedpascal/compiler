@@ -92,6 +92,7 @@ interface
 
 function version_string:string;
 function full_version_string:string;
+function revision_string:string;
 
 
 implementation
@@ -109,6 +110,16 @@ begin
   +'-'+{$i revision.inc}
 {$endif REVINC}
   ;
+end;
+
+
+function revision_string:string;
+begin
+{$ifdef REVINC}
+  revision_string := {$i revision.inc};
+{$else REVINC}
+  revision_string := 'dev';
+{$endif REVINC}
 end;
 
 end.

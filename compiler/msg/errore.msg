@@ -4336,7 +4336,7 @@ package_u_ppl_filename=13029_U_PPL filename $1
 # Logo (option -l)
 #
 option_logo=11023_[
-Unleashed Pascal Compiler version $FPCFULLVERSION [$FPCDATE] for $FPCCPU
+Unleashed Pascal $FPCIDENT
 Copyright (c) 2025-2026 Unleashed Pascal contributors, based on Free Pascal (c) 1993-2026 by Florian Klaempfl and others
 ]
 

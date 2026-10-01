@@ -616,19 +616,10 @@ PPUDUMP=ppudump
 endif
 endif
 REVINC:=$(wildcard revision.inc)
-ifneq ($(REVINC),)
-override LOCALOPT+=-dREVINC
  ifeq ($(REVSTR),)
   ifneq ($(wildcard ../.git),)
    ifneq ($(GIT),)
-GITDESCRIBE=$(shell $(GIT) describe --dirty)
-REVSTR:=$(word 2,$(subst -, ,$(GITDESCRIBE)))-$(word 3,$(subst -, ,$(GITDESCRIBE)))
-    ifneq ($(shell $(GIT) log @{u}..),)
-REVSTR:=$(REVSTR)-unpushed
-    endif
-    ifneq ($(word 4,$(subst -, ,$(GITDESCRIBE))),)
-REVSTR:=$(REVSTR)-$(word 4,$(subst -, ,$(GITDESCRIBE)))
-    endif
+REVSTR:=$(shell $(GIT) rev-parse --short=7 HEAD)
    endif
 export REVSTR
   else
@@ -643,6 +634,8 @@ export REVSTR
    endif
   endif
  endif
+ifneq ($(REVINC)$(REVSTR),)
+override LOCALOPT+=-dREVINC
 endif
 ifeq ($(REVINC),force)
 ifeq ($(REVSTR),)

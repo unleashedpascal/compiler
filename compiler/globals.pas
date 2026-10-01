@@ -760,6 +760,9 @@ Const
 
     procedure DefaultReplacements(var s:ansistring; substitute_env_variables:boolean=true);
 
+    // commit hash and target, e.g. a31cad8-x86_64-Win64
+    function compiler_ident_string:string;
+
     function  GetEnvPChar(const envname:ansistring):pchar;
     procedure FreeEnvPChar(p:pchar);
 
@@ -1078,6 +1081,11 @@ implementation
                           Default Macro Handling
 ****************************************************************************}
 
+     function compiler_ident_string:string;
+       begin
+         result:=revision_string+'-'+target_cpu_string+'-'+target_info.shortname;
+       end;
+
 
      procedure DefaultReplacements(var s:ansistring; substitute_env_variables:boolean=true);
 {$ifdef mswindows}
@@ -1122,6 +1130,7 @@ implementation
          { Replace some macros }
          Replace(s,'$FPCVERSION',version_string);
          Replace(s,'$FPCFULLVERSION',full_version_string);
+         Replace(s,'$FPCIDENT',compiler_ident_string);
          Replace(s,'$FPCDATE',date_string);
          Replace(s,'$FPCCPU',target_cpu_string);
          Replace(s,'$FPCOS',target_os_string);
