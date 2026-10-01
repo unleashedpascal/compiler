@@ -3057,6 +3057,12 @@ type
                  hs:=tostr(startsystime.Second);
                  macroIsString:=false;
                end;
+             'UNIXTIME':
+               begin
+                 hs:=tostr(round((EncodeDate(startsystime.Year,startsystime.Month,startsystime.Day)-UnixDateDelta)*SecsPerDay)
+                   +(startsystime.Hour*60+startsystime.Minute+GetLocalTimeOffset)*60+startsystime.Second);
+                 macroIsString:=false;
+               end;
              'FILE':
                hs:=current_module.sourcefiles.get_file_name(current_filepos.fileindex);
              'LINE':
@@ -3068,6 +3074,8 @@ type
                end;
              'FPCVERSION':
                hs:=version_string;
+             'FPCFULLVERSION':
+               hs:=full_version_string;
              'FPCDATE':
                hs:=date_string;
              'FPCTARGET':
