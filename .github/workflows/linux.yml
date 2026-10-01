@@ -19,6 +19,9 @@ jobs:
     - name: Checkout source
       uses: actions/checkout@v3
 
+    - name: Write compiler revision
+      run: echo "'$(git rev-parse --short=7 HEAD)'" > compiler/revision.inc
+
     - name: Build FPC x86_64 (native)
       run: |
         make distclean
@@ -29,6 +32,18 @@ jobs:
 
     - name: Build i386 cross-compiler
       run: make crossinstall OS_TARGET=linux CPU_TARGET=i386 INSTALL_PREFIX=$PWD/fpc PP=$PWD/compiler/ppcx64
+
+    - name: Check compiler ident
+      run: |
+        rev=$(git rev-parse --short=7 HEAD)
+        for ppc in compiler/ppcx64 compiler/ppcross386; do
+          ident=$("$ppc" -l | head -n 1 || true)
+          echo "$ppc: $ident"
+          case "$ident" in
+            "Unleashed Pascal $rev-"*) ;;
+            *) echo "ident lacks commit $rev"; exit 1 ;;
+          esac
+        done
 
     - name: Package artifacts
       run: |

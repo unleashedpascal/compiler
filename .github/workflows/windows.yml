@@ -33,6 +33,10 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v3
 
+    - name: Write compiler revision
+      run: echo "'$(git rev-parse --short=7 HEAD)'" > compiler/revision.inc
+      shell: bash
+
     - name: Update PATH env
       run: echo "C:\fpc322\bin\i386-win32" >> $env:GITHUB_PATH
       shell: powershell
@@ -55,6 +59,19 @@ jobs:
       run: |
         make crossinstall OS_TARGET=win32 CPU_TARGET=i386 INSTALL_PREFIX=C:\fpc PP=C:\fpc\bin\x86_64-win64\ppcx64.exe OPT="-dFPC_SOFT_FPUX80"
       shell: cmd
+
+    - name: Check compiler ident
+      run: |
+        rev=$(git rev-parse --short=7 HEAD)
+        for ppc in /c/fpc/bin/x86_64-win64/ppcx64.exe /c/fpc/bin/x86_64-win64/ppcross386.exe; do
+          ident=$("$ppc" -l | head -n 1 || true)
+          echo "$ppc: $ident"
+          case "$ident" in
+            "Unleashed Pascal $rev-"*) ;;
+            *) echo "ident lacks commit $rev"; exit 1 ;;
+          esac
+        done
+      shell: bash
 
     - name: Cleanup
       run: Remove-Item -Path 'C:\fpc\bin\i386-win32' -Recurse -Force
