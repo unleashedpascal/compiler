@@ -1139,6 +1139,15 @@ implementation
               end;
             if has_subject then
               subject.free;
+            if is_expr and not assigned(resultdef) then
+              begin
+                { every branch failed to parse, errors already reported }
+                ifchain.free;
+                if has_subject then
+                  subjectblock.free;
+                result:=cerrornode.create;
+                exit;
+              end;
             if not is_expr then
               begin
                 result:=ifchain;
