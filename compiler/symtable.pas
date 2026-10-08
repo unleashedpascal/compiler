@@ -1713,11 +1713,15 @@ implementation
           enumerators stay scoped to the record - the unit's symbol
           table stays clean. Qualified access (`TRec.kVal`) still works
           through the record symtable.
-          During PPU load defowner is still nil (trecorddef.ppuload sets
-          it only after the inner symtable has finished loading); skip
-          the redirect then and let the def land where the PPU stored it. }
+          During PPU load the redirect target does not exist yet: for a
+          record defowner is still nil (trecorddef.ppuload sets it only
+          after the inner symtable has finished loading), for an object
+          defowner is set but not yet inserted anywhere, so its owner is
+          nil. Skip the redirect then and let the def land where the PPU
+          stored it. }
         if (def.typ=enumdef) and
            assigned(defowner) and
+           assigned(defowner.owner) and
            not (m_composable_records in current_settings.modeswitches) then
           defowner.owner.insertdef(def)
         else
