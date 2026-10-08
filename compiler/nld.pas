@@ -1317,7 +1317,8 @@ implementation
         hp    : tarrayconstructornode;
         len   : longint;
         diff,
-        varia : boolean;
+        varia,
+        allint : boolean;
         eq    : tequaltype;
         hnodetype : tnodetype;
       begin
@@ -1341,6 +1342,7 @@ implementation
         len:=0;
         varia:=false;
         diff:=false;
+        allint:=true;
         if assigned(left) then
          begin
            hp:=self;
@@ -1348,6 +1350,7 @@ implementation
             begin
               typecheckpass(hp.left);
               set_varstate(hp.left,vs_read,[vsf_must_be_valid]);
+              allint:=allint and is_integer(hp.left.resultdef);
               if (hdef=nil) then
                 begin
                   hdef:=hp.left.resultdef;
@@ -1403,11 +1406,14 @@ implementation
            same way inline-var inference does for sub-int32 expressions. This
            kills the order-dependent first-element typing surprise (e.g.
            `[0, 255, 0]` typed as ShortInt with `255` flagged as differing
-           type) - all integer-element literals settle on LongInt. }
+           type) - all integer-element literals settle on LongInt.
+           Only when every element is an integer: a float after an integer
+           keeps the stock typing so the whole literal can still convert to
+           the float array it is assigned or passed to. }
          if (m_unleashed in current_settings.modeswitches) and
             assigned(hdef) and (hdef.typ=orddef) and
             (torddef(hdef).ordtype in [u8bit,u16bit,s8bit,s16bit]) and
-            not diff and not varia then
+            allint and not diff and not varia then
            begin
              hdef:=s32inttype;
              { rewalk and force each element to s32inttype so subsequent
