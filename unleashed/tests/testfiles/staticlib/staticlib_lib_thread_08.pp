@@ -3,6 +3,8 @@ program staticlib_lib_thread_08;
 
 {$mode unleashed}
 {$linklib lstaticlib_lib_thread_08}
+// the archive cannot carry the shared libraries its cthreads needs
+{$ifdef UNIX}{$linklib c}{$linklib pthread}{$linklib dl}{$endif}
 
 procedure libThreadInit; cdecl; external name 'libthread_init';
 procedure libThreadDone; cdecl; external name 'libthread_done';
