@@ -4395,7 +4395,9 @@ implementation
                   (sp_generic_dummy in srsym.symoptions) and
                   (current_scanner.token in [_LT,_LSHARPBRACKET]) then
                 begin
-                  result:=cspecializenode.create(nil,getaddr,srsym,unit_found)
+                  if not is_member_read(srsym,srsymtable,result,hdef) then
+                    result:=nil;
+                  result:=cspecializenode.create(result,getaddr,srsym,unit_found)
                 end
               { check if it's a method/class method }
               else if is_member_read(srsym,srsymtable,result,hdef) then
