@@ -1429,6 +1429,7 @@ interface
     function is_implicit_array_pointer(def: tdef): boolean;
     function is_class_or_object(def: tdef): boolean;
     function is_record(def: tdef): boolean;
+    function has_non_trivial_value_init(def: tdef): boolean;
 
     function is_javaclass(def: tdef): boolean;
     function is_javaclassref(def: tdef): boolean;
@@ -9985,6 +9986,27 @@ implementation
         result:=
           assigned(def) and
           (def.typ=recorddef);
+      end;
+
+    function has_non_trivial_value_init(def: tdef): boolean;
+      begin
+        result:=false;
+        if not assigned(def) then
+          exit;
+        case def.typ of
+          recorddef:
+            result:=
+              (mop_initialize in trecordsymtable(trecorddef(def).symtable).managementoperators) or
+              def.has_non_trivial_init_child(true);
+          arraydef:
+            result:=is_normal_array(def) and
+              has_non_trivial_value_init(tarraydef(def).elementdef);
+          objectdef:
+            result:=(tobjectdef(def).objecttype=odt_object) and
+              def.has_non_trivial_init_child(true);
+          else
+            ;
+        end;
       end;
 
     function is_javaclass(def: tdef): boolean;
