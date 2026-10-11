@@ -1354,8 +1354,9 @@ implementation
                 do_write_vmts(trecorddef(def).symtable,is_global);
               objectdef :
                 begin
-                  { Skip generics and forward defs }
+                  { Skip generics, partial specializations and forward defs }
                   if ([df_generic,df_genconstraint]*def.defoptions<>[]) or
+                     tstoreddef(def).has_generic_paras or
                      (oo_is_forward in tobjectdef(def).objectoptions) then
                     continue;
                   if tobjectdef(def).is_unique_objpasdef then
