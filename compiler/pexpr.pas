@@ -2507,6 +2507,29 @@ implementation
       end;
 
 
+    procedure materialize_helper_instance(var node:tnode;helperdef:tobjectdef);
+      var
+        n : tnode;
+        newstatement : tstatementnode;
+        temp : ttempcreatenode;
+        extdef : tdef;
+      begin
+        if not((node.nodetype in (nodetype_const+[addrn])) or
+               (nf_no_lvalue in node.flags)) then
+          exit;
+        extdef:=helperdef.extendeddef;
+        newstatement:=nil;
+        n:=internalstatements(newstatement);
+        temp:=ctempcreatenode.create(extdef,extdef.size,tt_persistent,false);
+        addstatement(newstatement,temp);
+        addstatement(newstatement,cassignmentnode.create(ctemprefnode.create(temp),node));
+        addstatement(newstatement,ctempdeletenode.create_normal_temp(temp));
+        addstatement(newstatement,ctemprefnode.create(temp));
+        node:=n;
+        do_typecheckpass(node)
+      end;
+
+
     { the ID token has to be consumed before calling this function }
     procedure do_member_read(structh:tabstractrecorddef;getaddr:boolean;sym:tsym;var p1:tnode;var again:boolean;callflags:tcallnodeflags;spezcontext:tspecializationcontext);
       var
@@ -2529,6 +2552,9 @@ implementation
            end
          else
            begin
+              if assigned(p1) and
+                 is_objectpascal_helper(tdef(sym.owner.defowner)) then
+                materialize_helper_instance(p1,tobjectdef(sym.owner.defowner));
               if assigned(p1) then
                begin
                  if not assigned(p1.resultdef) then
@@ -3225,10 +3251,6 @@ implementation
         var
           srsym : tsym;
           srsymtable : tsymtable;
-          n : tnode;
-          newstatement : tstatementnode;
-          temp : ttempcreatenode;
-          extdef : tdef;
         begin
           result:=false;
           if (current_scanner.token=_ID) and (block_type in [bt_body,bt_general,bt_except,bt_const]) then
@@ -3246,20 +3268,6 @@ implementation
                   if not (srsymtable.symtabletype=objectsymtable) or
                       not is_objectpascal_helper(tdef(srsymtable.defowner)) then
                     internalerror(2013011401);
-                  { convert const node to temp node of the extended type }
-                  if node.nodetype in (nodetype_const+[addrn]) then
-                    begin
-                      extdef:=tobjectdef(srsymtable.defowner).extendeddef;
-                      newstatement:=nil;
-                      n:=internalstatements(newstatement);
-                      temp:=ctempcreatenode.create(extdef,extdef.size,tt_persistent,false);
-                      addstatement(newstatement,temp);
-                      addstatement(newstatement,cassignmentnode.create(ctemprefnode.create(temp),node));
-                      addstatement(newstatement,ctempdeletenode.create_normal_temp(temp));
-                      addstatement(newstatement,ctemprefnode.create(temp));
-                      node:=n;
-                      do_typecheckpass(node)
-                    end;
                   check_hints(srsym,srsym.symoptions,srsym.deprecatedmsg);
                   consume(_ID);
                   do_member_read(nil,getaddr,srsym,node,again,[],nil);
