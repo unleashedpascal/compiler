@@ -23,7 +23,8 @@ Each directive has a 2-arg and a 1-arg form, chosen by token count: two tokens (
 The path may be quoted with `'...'` or `"..."`, or left bare (no spaces inside). Path resolution matches `{$I}`:
 
 - an **absolute** path is used verbatim;
-- a **relative** path is searched in the current source file's directory, then the local includepath, then the global includepath.
+- a **relative** path is searched in the current source file's directory, then the local includepath, then the global includepath;
+- a name starting with `*` stands for the current source file, so `'*.dat'` inside `unit1.pas` means `unit1.dat` (same rule as `{$R *.res}`).
 
 ## `$embedstr`
 

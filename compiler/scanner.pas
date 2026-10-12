@@ -3197,6 +3197,9 @@ type
         pathspec := FixFileName(pathspec);
         path := ExtractFilePath(pathspec);
         name := ExtractFileName(pathspec);
+        { `*.ext` names the current source file, like $R and $I }
+        if (length(name) >= 1) and (name[1] = '*') then
+          name := ChangeFileExt(current_module.sourcefiles.get_file_name(current_filepos.fileindex), '') + ExtractFileExt(name);
         if not findincludefile(path, name, foundfile) then
           begin
             Message1(scan_f_cannot_open_includefile, pathspec);
