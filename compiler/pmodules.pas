@@ -2996,7 +2996,8 @@ type
           DLL will include the edata section }
         if assigned(exportlib) and
            (target_info.system in [system_i386_win32,system_i386_wdosx]) and
-           (mf_has_exports in curr.moduleflags) then
+           (mf_has_exports in curr.moduleflags) and
+           not (cs_link_staticlib in current_settings.globalswitches) then
           current_asmdata.asmlists[al_procedures].concat(tai_const.createname(make_mangledname('EDATA',curr.localsymtable,''),0));
 
         if (force_init_final or cnodeutils.force_final) and
