@@ -37,6 +37,7 @@ interface
          procedure second_cmp128bit; override;
          procedure second_mul;
          procedure second_mul128;
+         procedure second_mul64to128;
        end;
 
   implementation
@@ -205,6 +206,55 @@ interface
       end;
 
 
+    { 64 bit * 64 bit -> 128 bit, operands prepared by try_make_mul64to128;
+      one MUL/IMUL leaves the whole product in RDX:RAX }
+    procedure tx8664addnode.second_mul64to128;
+      var
+        reg : tregister;
+        ref : treference;
+        use_ref : boolean;
+        op : tasmop;
+      begin
+        pass_left_right;
+
+        reference_reset(ref,0,[]);
+        reg:=NR_NO;
+        use_ref:=false;
+        if left.location.loc in [LOC_REGISTER,LOC_CREGISTER] then
+          reg:=left.location.register
+        else if left.location.loc in [LOC_REFERENCE,LOC_CREFERENCE] then
+          begin
+            ref:=left.location.reference;
+            use_ref:=true;
+          end
+        else
+          begin
+            reg:=cg.getintregister(current_asmdata.CurrAsmList,OS_64);
+            hlcg.a_load_loc_reg(current_asmdata.CurrAsmList,left.resultdef,left.resultdef,left.location,reg);
+          end;
+        cg.getcpuregister(current_asmdata.CurrAsmList,NR_RAX);
+        hlcg.a_load_loc_reg(current_asmdata.CurrAsmList,right.resultdef,right.resultdef,right.location,NR_RAX);
+        cg.getcpuregister(current_asmdata.CurrAsmList,NR_RDX);
+
+        if is_signed(left.resultdef) then
+          op:=A_IMUL
+        else
+          op:=A_MUL;
+        if use_ref then
+          emit_ref(op,S_Q,ref)
+        else
+          emit_reg(op,S_Q,reg);
+        cg.ungetcpuregister(current_asmdata.CurrAsmList,NR_RDX);
+        cg.ungetcpuregister(current_asmdata.CurrAsmList,NR_RAX);
+
+        location_reset(location,LOC_REGISTER,def_cgsize(resultdef));
+        location.register128.reglo:=cg.getintregister(current_asmdata.CurrAsmList,OS_64);
+        location.register128.reghi:=cg.getintregister(current_asmdata.CurrAsmList,OS_64);
+        cg.a_load_reg_reg(current_asmdata.CurrAsmList,OS_64,OS_64,NR_RAX,location.register128.reglo);
+        cg.a_load_reg_reg(current_asmdata.CurrAsmList,OS_64,OS_64,NR_RDX,location.register128.reghi);
+      end;
+
+
     procedure tx8664addnode.second_cmp128bit;
       var
         truelabel,
@@ -336,6 +386,13 @@ interface
 
     procedure tx8664addnode.second_addordinal;
     begin
+      { 64 bit operands with a 128 bit result, see try_make_mul64to128 }
+      if (nodetype=muln) and is_128bitint(resultdef) then
+      begin
+        second_mul64to128;
+        exit;
+      end;
+
       { filter unsigned MUL opcode, which requires special handling.
         Note that when overflow checking is off, we can use IMUL instead. }
       if (nodetype=muln) and

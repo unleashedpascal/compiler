@@ -120,6 +120,8 @@ interface
           { checks whether a muln can be calculated as a 32bit }
           { * 32bit -> 64 bit                                  }
           function try_make_mul32to64: boolean;
+          { same for a 64bit * 64bit -> 128 bit muln }
+          function try_make_mul64to128: boolean;
 
           { Match against the ranges, i.e.:
             var a:1..10;
@@ -4490,6 +4492,79 @@ const
       end;
 
 
+    function taddnode.try_make_mul64to128: boolean;
+
+      function is_64bitordconst(n: tnode; out canbesignedconst, canbeunsignedconst: boolean): boolean;
+        begin
+          result := (n.nodetype = ordconstn) and
+                    tordconstnode(n).value.representable64;
+          canbesignedconst:=result and tordconstnode(n).value.fitsinint64;
+          canbeunsignedconst:=result and tordconstnode(n).value.fitsinqword;
+        end;
+
+      function is_64to128typeconv(n: tnode): boolean;
+        begin
+          result := (n.nodetype = typeconvn) and
+                    is_integer(ttypeconvnode(n).left.resultdef) and
+                    not is_128bit(ttypeconvnode(n).left.resultdef);
+        end;
+
+      var
+        temp: tnode;
+        leftoriginallysigned,
+        canbesignedconst, canbeunsignedconst, swapped: boolean;
+      begin
+        result := false;
+        swapped := false;
+        { make sure that if there is a constant, that it's on the right }
+        if left.nodetype = ordconstn then
+          begin
+            swapleftright;
+            swapped := true;
+          end;
+        if is_64to128typeconv(left) then
+          begin
+            leftoriginallysigned:=is_signed(ttypeconvnode(left).left.resultdef);
+            if ((is_64bitordconst(right,canbesignedconst, canbeunsignedconst) and
+                 ((leftoriginallysigned and canbesignedconst) or
+                  (not leftoriginallysigned and canbeunsignedconst))) or
+                (is_64to128typeconv(right) and
+                  ((leftoriginallysigned =
+                    is_signed(ttypeconvnode(right).left.resultdef)) or
+                   (leftoriginallysigned and
+                    (torddef(ttypeconvnode(right).left.resultdef).ordtype in [u8bit,u16bit,u32bit]))))) then
+              begin
+                temp := ttypeconvnode(left).left;
+                ttypeconvnode(left).left := nil;
+                left.free;
+                left := temp;
+                if (right.nodetype = typeconvn) then
+                  begin
+                    temp := ttypeconvnode(right).left;
+                    ttypeconvnode(right).left := nil;
+                    right.free;
+                    right := temp;
+                  end;
+                if (is_signed(left.resultdef)) then
+                  begin
+                    inserttypeconv_internal(left,s64inttype);
+                    inserttypeconv_internal(right,s64inttype);
+                  end
+                else
+                  begin
+                    inserttypeconv_internal(left,u64inttype);
+                    inserttypeconv_internal(right,u64inttype);
+                  end;
+                firstpass(left);
+                firstpass(right);
+                result := true;
+              end;
+          end;
+        if not result and swapped then
+          swapleftright;
+      end;
+
+
     function taddnode.use_fma : boolean;
       begin
         result:=false;
@@ -5142,6 +5217,15 @@ const
                begin
                  { if the code generator can handle 32 to 64-bit muls,
                    we're done here }
+                 expectloc:=LOC_REGISTER;
+               end
+             else if (nodetype=muln) and
+                is_128bitint(resultdef) and
+                not use_generic_int128ops and
+                try_make_mul64to128 then
+               begin
+                 { the code generator multiplies the two 64 bit operands
+                   straight into a 128 bit register pair }
                  expectloc:=LOC_REGISTER;
                end
              { 128 bit ints are lowered to helper calls unless the
