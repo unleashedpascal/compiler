@@ -33,6 +33,7 @@ type
     CheckBinLacks: TStringArray;
     Cpu: TStringArray;
     Precompile: String;
+    Touch: String;
     ExpectMsg: String;
     Prelib: String;
   end;
@@ -198,6 +199,7 @@ begin
       'CHECKBIN_LACKS': Flags.CheckBinLacks := value.Split([','], TStringSplitOptions.ExcludeEmpty);
       'CPU':        Flags.Cpu := value.Split([','], TStringSplitOptions.ExcludeEmpty);
       'PRECOMPILE': Flags.Precompile := value;
+      'TOUCH':      Flags.Touch := value;
       'EXPECTMSG':  Flags.ExpectMsg := value;
       'PRELIB':     Flags.Prelib := value;
       _:            ; // unknown flag, ignore
@@ -471,19 +473,28 @@ end;
 // %PRECOMPILE units are compiled next to their source, so the test dir must
 // be brought back to .pp-only state afterwards; a .tmp copy can appear too
 // when the main compile decides to recompile the unit (-FU points there)
-procedure CleanupUnitArtifacts(const UnitSrc: String);
+procedure CleanupUnitArtifacts(const UnitDir: String; const Units: TStringArray);
 begin
-  if UnitSrc = '' then Exit;
   var exts: array of String := ['.ppu', '.o'];
-  var tmpStem := IncludeTrailingPathDelimiter(GTempDir) +
-                 ChangeFileExt(ExtractFileName(UnitSrc), '');
-  for var e in exts do
+  for var u in Units do
   begin
-    if FileExists(ChangeFileExt(UnitSrc, e)) then
-      DeleteFile(ChangeFileExt(UnitSrc, e));
-    if FileExists(tmpStem + e) then
-      DeleteFile(tmpStem + e);
+    var unitSrc := UnitDir + u;
+    var tmpStem := IncludeTrailingPathDelimiter(GTempDir) +
+                   ChangeFileExt(ExtractFileName(unitSrc), '');
+    for var e in exts do
+    begin
+      if FileExists(ChangeFileExt(unitSrc, e)) then
+        DeleteFile(ChangeFileExt(unitSrc, e));
+      if FileExists(tmpStem + e) then
+        DeleteFile(tmpStem + e);
+    end;
   end;
+end;
+
+// %TOUCH moved the unit source's timestamp; put the original one back
+procedure RestoreFileAge(const Path: String; Age: LongInt);
+begin
+  if Age <> -1 then FileSetDate(Path, Age);
 end;
 
 // %PRELIB leaves lib<stem>.a and <stem>.o in the worker .tmp/ dir
@@ -588,14 +599,16 @@ begin
 
   var timeoutSec := if R.Flags.Timeout > 0 then R.Flags.Timeout else GTimeoutSec;
 
-  // %PRECOMPILE=unit.pas: compile a helper unit in its own compiler
+  // %PRECOMPILE=a.pas,b.pas: compile each helper unit in its own compiler
   // invocation, so the main compile loads it back from the ppu (exercising
   // the ppu roundtrip) instead of reusing in-memory defs
-  var preUnitSrc := if R.Flags.Precompile <> '' then
-    ExtractFilePath(SrcPath) + R.Flags.Precompile else '';
-  defer CleanupUnitArtifacts(preUnitSrc);
-  if preUnitSrc <> '' then
+  var preUnits: TStringArray := nil;
+  if R.Flags.Precompile <> '' then
+    preUnits := R.Flags.Precompile.Split([','], TStringSplitOptions.ExcludeEmpty);
+  defer CleanupUnitArtifacts(ExtractFilePath(SrcPath), preUnits);
+  for var preUnit in preUnits do
   begin
+    var preUnitSrc := ExtractFilePath(SrcPath) + preUnit;
     var preDir := ExcludeTrailingPathDelimiter(ExtractFilePath(SrcPath));
     var preExit: Integer;
     var preOut: String;
@@ -615,6 +628,14 @@ begin
       Exit;
     end;
   end;
+
+  // %TOUCH=unit.pas: date the precompiled unit source newer than its ppu, so
+  // the main compile recompiles it from source while the other units load
+  // from their ppus, like an incremental build after an edit
+  var touchSrc := if R.Flags.Touch <> '' then ExtractFilePath(SrcPath) + R.Flags.Touch else '';
+  var touchAge := if touchSrc <> '' then FileAge(touchSrc) else -1;
+  defer RestoreFileAge(touchSrc, touchAge);
+  if touchAge <> -1 then FileSetDate(touchSrc, DateTimeToFileDate(Now + 10/SecsPerDay));
 
   // %PRELIB=lib.pas: build a static library (-XA) into .tmp/ as lib<name>.a,
   // the test links it with {$linklib name}; the ld shipped with fpc cannot
@@ -933,6 +954,7 @@ begin
     if r.Flags.NoRun then head += ' (%NORUN)';
     if r.Flags.Opt <> '' then head += ' (%OPT=' + r.Flags.Opt + ')';
     if r.Flags.Precompile <> '' then head += ' (%PRECOMPILE=' + r.Flags.Precompile + ')';
+    if r.Flags.Touch <> '' then head += ' (%TOUCH=' + r.Flags.Touch + ')';
     if r.Flags.Prelib <> '' then head += ' (%PRELIB=' + r.Flags.Prelib + ')';
     if r.Flags.Timeout > 0 then head += ' (%TIMEOUT=' + IntToStr(r.Flags.Timeout) + ')';
     if Length(r.Flags.CheckBinHas) > 0 then
@@ -1090,6 +1112,10 @@ begin
   WriteLn('                   test is skipped when the target cpu is not listed');
   WriteLn('  %EXPECTMSG=S     the compiler output must contain S (quote it when it');
   WriteLn('                   has spaces); checked for passing and %FAIL tests alike');
+  WriteLn('  %PRECOMPILE=L    comma-separated helper units, each compiled in its own');
+  WriteLn('                   invocation before the test so it loads from the ppu');
+  WriteLn('  %TOUCH=unit.pas  after %PRECOMPILE, date the unit source newer than');
+  WriteLn('                   its ppu so the test compile recompiles it from source');
   WriteLn('  %PRELIB=lib.pas  build lib.pas next to the test as a static library');
   WriteLn('                   (-XA) into .tmp/ as lib<name>.a before the test; the');
   WriteLn('                   test links it with {$linklib name}');
