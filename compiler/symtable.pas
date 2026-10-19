@@ -893,6 +893,9 @@ implementation
                (sym.typ<>typesym) then
               sym.deref;
           end;
+        // a symtable loaded from a ppu has its derefs from the file, so
+        // after this first resolve it can be re-resolved like a built one
+        deref_built:=true;
       end;
 
 
@@ -909,6 +912,7 @@ implementation
                def.is_registered then
               def.derefimpl;
           end;
+        derefimpl_built:=true;
       end;
 
 
