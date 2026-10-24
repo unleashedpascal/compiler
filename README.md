@@ -160,6 +160,9 @@ Stock Lazarus still builds and runs Unleashed projects fine, but its Code Insigh
 
 ### Option 1: Official installer
 
+> [!NOTE]
+> Install Unleashed Pascal with either the Unleashed Installer or fpcupdeluxe, and do not mix the two on one install (for example, installing with the Unleashed Installer and then adding cross compilers through fpcupdeluxe). fpcupdeluxe installs Unleashed Pascal the regular way and is fully supported, so pick it if you need more cross compilers than the installer offers. Otherwise the Unleashed Installer is recommended: it creates its own application shortcuts and uses a slightly different install flow.
+
 Self-contained GUI installer for Windows and Linux: it downloads sources, builds the compiler and the IDE into a directory of your choice, optionally installs cross compilers, and drops a desktop shortcut wired to a per-install IDE config. No PATH changes, no registry side effects, no overwriting of an existing FPC - the whole thing lives in one folder and can be deleted by deleting that folder.
 
 Cross targets are checkboxes: `x86_64-win64`, `x86_64-linux`, `i386-win32`, `i386-linux`, `wasm32-wasip1`. You can also pin the compiler and the IDE to a branch or a specific commit instead of taking the latest.
@@ -176,6 +179,9 @@ It can also build optional IDE addons in the same pass, so the editor is set up 
 Re-runs are surgical: unchanged parts self-skip, a newly ticked cross target gets built, an unticked one gets removed, and toggling an addon rebuilds just the IDE. Point it at an existing install to pull an update without touching anything else.
 
 ### Option 2: fpcupdeluxe
+
+> [!NOTE]
+> Install Unleashed Pascal with either the Unleashed Installer or fpcupdeluxe, and do not mix the two on one install (for example, installing with the Unleashed Installer and then adding cross compilers through fpcupdeluxe). fpcupdeluxe installs Unleashed Pascal the regular way and is fully supported, so pick it if you need more cross compilers than the installer offers. Otherwise the Unleashed Installer is recommended: it creates its own application shortcuts and uses a slightly different install flow.
 
 fpcupdeluxe supports Unleashed out of the box - nothing to configure. Download [fpcupdeluxe](https://github.com/LongDirtyAnimAlf/fpcupdeluxe/releases), untick **GitLab**, and pick `unleashed.git` as the **FPC version** and the **Lazarus version**. From there it behaves like any regular FPC install: FPC only, Lazarus only, or both at once, with cross-compilers on the `Cross` tab.
 
