@@ -14,11 +14,6 @@
  **********************************************************************}
 unit FpSonar.Rules.Tokens;
 
-{ TOK-tier rules (rtTok / rfTokenStream) over the positioned, token stream:
-  keyword casing, section combining, one-declaration-per-line,  punctuation
-  semicolon comma hygiene, disabled hint/warning directives, indentation,
-  commented-out code, and the NOSONAR / comment / string-literal trackers.
-}
 
 {$mode objfpc}{$H+}
 
@@ -350,7 +345,7 @@ var
     else if aContext.Tokens[lSig[aPos]].Text <> '' then
       Result := aContext.Tokens[lSig[aPos]].Text
     else
-      Result := TokenPunct(aContext.Tokens[lSig[aPos]]);
+      Result := aContext.Tokens[lSig[aPos]].Punct;
   end;
 
   // Lowercased keyword text of significant token aPos; '' if out of range.
@@ -358,7 +353,7 @@ var
   begin
     if (aPos < 0) or (aPos >= lSigCount) then
       Result := ''
-    else if IsKeywordToken(aContext.Tokens[lSig[aPos]]) then
+    else if aContext.Tokens[lSig[aPos]].IsKeyword then
       Result := LowerCase(aContext.Tokens[lSig[aPos]].Text)
     else
       Result := RawText(aPos);
@@ -372,7 +367,7 @@ var
     Result := False;
     if (aPos < 0) or (aPos >= lSigCount) then
       Exit;
-    if IsKeywordToken(aContext.Tokens[lSig[aPos]]) then
+    if aContext.Tokens[lSig[aPos]].IsKeyword then
       Exit;
     lText := aContext.Tokens[lSig[aPos]].Text;
     if Length(lText) = 0 then
@@ -420,8 +415,8 @@ var
     Result := IsIdent(aPos)
       or (RawText(aPos) = ')') or (RawText(aPos) = ']')
       or (LowText(aPos) = 'end')
-      or IsNumberToken(aContext.Tokens[lSig[aPos]])
-      or IsStringToken(aContext.Tokens[lSig[aPos]]);
+      or aContext.Tokens[lSig[aPos]].IsNumber
+      or aContext.Tokens[lSig[aPos]].IsString;
   end;
 
   // Records a redundant section header (suppressed once broken).
@@ -545,9 +540,9 @@ begin
   lSigCount := 0;
   SetLength(lSig, Length(aContext.Tokens));
   for i := 0 to High(aContext.Tokens) do
-    if (not IsTriviaToken(aContext.Tokens[i]))
+    if (not aContext.Tokens[i].IsTrivia)
       and ((aContext.Tokens[i].Text <> '')
-      or (TokenPunct(aContext.Tokens[i]) <> '')) then
+      or (aContext.Tokens[i].Punct <> '')) then
     begin
       lSig[lSigCount] := i;
       Inc(lSigCount);
@@ -581,7 +576,7 @@ begin
       Break;
     ltx := RawText(i);
     lw := '';
-    if IsKeywordToken(aContext.Tokens[lSig[i]]) then
+    if aContext.Tokens[lSig[i]].IsKeyword then
       lw := LowerCase(aContext.Tokens[lSig[i]].Text);
 
     // detect misindented class/record visibility specifier
@@ -609,10 +604,9 @@ begin
         AddVisibilitySpec(lSig[i]);
     end;
 
-      { detect visibility/field-section structure
-        A parallel branch to the misindent detection above
-        Tracks, per open type body, the running visibility section
-        and any open var/class-var field section }
+      { Detect visibility/field-section structure: track, per open type body,
+        the running visibility section and any open var/class-var field
+        section. }
     if (lParen = 0) and (lBrack = 0)
       and (lStack[High(lStack)].Kind = fkType) then
     begin
@@ -988,7 +982,7 @@ begin
   if aToken.Text <> '' then
     Result := aToken.Text
   else
-    Result := TokenPunct(aToken);
+    Result := aToken.Punct;
 end;
 
 
@@ -1141,7 +1135,7 @@ begin
   for i := 0 to High(aContext.Tokens) do
   begin
     lTok := aContext.Tokens[i];
-    if not IsCommentToken(lTok) then
+    if not lTok.IsComment then
       Continue;
     if not DirectiveParts(lTok.Text, lName, lRest) then
       Continue;
@@ -1188,7 +1182,7 @@ begin
   for i := 0 to High(aContext.Tokens) do
   begin
     lTok := aContext.Tokens[i];
-    if not IsKeywordToken(lTok) then
+    if not lTok.IsKeyword then
       Continue;
     // Keywords are pure ASCII => byte length = column span.
     lLower := LowerCase(lTok.Text);
@@ -1366,7 +1360,7 @@ begin
   for i := 0 to High(aContext.Tokens) do
   begin
     lTok := aContext.Tokens[i];
-    if not IsCommentToken(lTok) then
+    if not lTok.IsComment then
       Continue;
     // Never flag a dollar-directive comment nor a NOSONAR-carrying comment.
     if (Length(lTok.Text) > 0) and (lTok.Text[1] = '$') then
@@ -1399,7 +1393,7 @@ begin
   for i := 0 to High(aContext.Tokens) do
   begin
     lTok := aContext.Tokens[i];
-    if not IsCommentToken(lTok) then
+    if not lTok.IsComment then
       Continue;
     if FindNoSonar(lTok.Text, lHasReason, lReason)
       and ((not cRequireReason) or (not lHasReason)) then
@@ -1423,7 +1417,7 @@ begin
   for i := 0 to High(aContext.Tokens) do
   begin
     lTok := aContext.Tokens[i];
-    if not IsCommentToken(lTok) then
+    if not lTok.IsComment then
       Continue;
     // Skip a dollar-directive comment (not a prose/code comment).
     if (Length(lTok.Text) > 0) and (lTok.Text[1] = '$') then
@@ -1456,7 +1450,7 @@ begin
   for i := 0 to High(aContext.Tokens) do
   begin
     lTok := aContext.Tokens[i];
-    if not IsStringToken(lTok) then
+    if not lTok.IsString then
       Continue;
     if Pos(cStringLiteralPattern, lTok.Text) > 0 then
       aCollector.AddIssue(FMetadata.RuleId, aContext.FileName,
@@ -1499,115 +1493,137 @@ end;
 initialization
   RegisterRule(TRuleLowercaseKeywords.Create(TRuleMetadata.Make(
     'LowercaseKeywords', rtTok, rfTokenStream, sevMinor, itCodeSmell, cfHigh,
-    True, cKeyLowercaseKeywords)));
+    True, cKeyLowercaseKeywords).WithDescription(
+    'Flags a keyword not written in lowercase.')));
   RegisterMessage(cKeyLowercaseKeywords, SLowercaseKeywords);
 
   RegisterRule(TRuleCombineConstSections.Create(TRuleMetadata.Make(
     'CombineConstSections', rtTok, rfTokenStream, sevMinor, itCodeSmell, cfHigh,
-    True, cKeyCombineConst)));
+    True, cKeyCombineConst).WithDescription(
+    'Flags a const section that can be merged with the preceding one.')));
   RegisterMessage(cKeyCombineConst, SCombineConstSections);
 
   RegisterRule(TRuleCombineTypeSections.Create(TRuleMetadata.Make(
     'CombineTypeSections', rtTok, rfTokenStream, sevMinor, itCodeSmell, cfHigh,
-    True, cKeyCombineType)));
+    True, cKeyCombineType).WithDescription(
+    'Flags a type section that can be merged with the preceding one.')));
   RegisterMessage(cKeyCombineType, SCombineTypeSections);
 
   RegisterRule(TRuleCombineVarSections.Create(TRuleMetadata.Make(
     'CombineVarSections', rtTok, rfTokenStream, sevMinor, itCodeSmell, cfHigh,
-    True, cKeyCombineVar)));
+    True, cKeyCombineVar).WithDescription(
+    'Flags a var section that can be merged with the preceding one.')));
   RegisterMessage(cKeyCombineVar, SCombineVarSections);
 
   RegisterRule(TRuleDeclareFieldsIndividually.Create(TRuleMetadata.Make(
     'DeclareFieldsIndividually', rtTok, rfTokenStream, sevMinor, itCodeSmell,
-    cfHigh, True, cKeyDeclareFields)));
+    cfHigh, True, cKeyDeclareFields).WithDescription(
+    'Flags multiple fields in one declaration; declare each individually.')));
   RegisterMessage(cKeyDeclareFields, SDeclareFieldsIndividually);
 
   RegisterRule(TRuleDeclareVariablesIndividually.Create(TRuleMetadata.Make(
     'DeclareVariablesIndividually', rtTok, rfTokenStream, sevMinor, itCodeSmell,
-    cfHigh, True, cKeyDeclareVariables)));
+    cfHigh, True, cKeyDeclareVariables).WithDescription(
+    'Flags multiple variables in one declaration; declare each individually.')));
   RegisterMessage(cKeyDeclareVariables, SDeclareVariablesIndividually);
 
   RegisterRule(TRuleDeclareParametersIndividually.Create(TRuleMetadata.Make(
     'DeclareParametersIndividually', rtTok, rfTokenStream, sevMinor, itCodeSmell,
-    cfHigh, True, cKeyDeclareParameters)));
+    cfHigh, True, cKeyDeclareParameters).WithDescription(
+    'Flags parameters that should be declared in their own group.')));
   RegisterMessage(cKeyDeclareParameters, SDeclareParametersIndividually);
 
   RegisterRule(TRuleNoEmptyParenthesesOnRoutines.Create(TRuleMetadata.Make(
     'NoEmptyParenthesesOnRoutines', rtTok, rfTokenStream, sevMinor, itCodeSmell,
-    cfHigh, True, cKeyNoEmptyParens)));
+    cfHigh, True, cKeyNoEmptyParens).WithDescription(
+    'Flags empty parentheses on a routine that can be removed.')));
   RegisterMessage(cKeyNoEmptyParens, SNoEmptyParenthesesOnRoutines);
 
   // Punctuation + directive rules.
   RegisterRule(TRuleNoStraySemicolons.Create(TRuleMetadata.Make(
     'NoStraySemicolons', rtTok, rfTokenStream, sevMinor, itCodeSmell, cfHigh,
-    True, cKeyNoStraySemicolons)));
+    True, cKeyNoStraySemicolons).WithDescription(
+    'Flags a stray semicolon that can be removed.')));
   RegisterMessage(cKeyNoStraySemicolons, SNoStraySemicolons);
 
   RegisterRule(TRuleNoOmittedSemicolons.Create(TRuleMetadata.Make(
     'NoOmittedSemicolons', rtTok, rfTokenStream, sevMinor, itCodeSmell, cfHigh,
-    True, cKeyNoOmittedSemicolons)));
+    True, cKeyNoOmittedSemicolons).WithDescription(
+    'Flags a missing semicolon before a block terminator.')));
   RegisterMessage(cKeyNoOmittedSemicolons, SNoOmittedSemicolons);
 
   RegisterRule(TRuleNoExtraneousCommas.Create(TRuleMetadata.Make(
     'NoExtraneousCommas', rtTok, rfTokenStream, sevMinor, itCodeSmell, cfHigh,
-    True, cKeyNoExtraneousCommas)));
+    True, cKeyNoExtraneousCommas).WithDescription(
+    'Flags an extraneous comma that can be removed.')));
   RegisterMessage(cKeyNoExtraneousCommas, SNoExtraneousCommas);
 
   RegisterRule(TRuleNoDisabledCompilerHints.Create(TRuleMetadata.Make(
     'NoDisabledCompilerHints', rtTok, rfTokenStream, sevMajor, itCodeSmell,
-    cfHigh, True, cKeyNoDisabledHints)));
+    cfHigh, True, cKeyNoDisabledHints).WithDescription(
+    'Flags directives that disable compiler hints.')));
   RegisterMessage(cKeyNoDisabledHints, SNoDisabledCompilerHints);
 
   RegisterRule(TRuleNoDisabledCompilerWarnings.Create(TRuleMetadata.Make(
     'NoDisabledCompilerWarnings', rtTok, rfTokenStream, sevMajor, itCodeSmell,
-    cfHigh, True, cKeyNoDisabledWarnings)));
+    cfHigh, True, cKeyNoDisabledWarnings).WithDescription(
+    'Flags directives that disable compiler warnings.')));
   RegisterMessage(cKeyNoDisabledWarnings, SNoDisabledCompilerWarnings);
 
   RegisterRule(TRuleNoIndentUnitLevelKeywords.Create(TRuleMetadata.Make(
     'NoIndentUnitLevelKeywords', rtTok, rfTokenStream, sevMinor, itCodeSmell,
-    cfHigh, True, cKeyNoIndentUnitLevel)));
+    cfHigh, True, cKeyNoIndentUnitLevel).WithDescription(
+    'Flags a unit-level keyword not starting at column 1.')));
   RegisterMessage(cKeyNoIndentUnitLevel, SNoIndentUnitLevelKeywords);
 
   // Layout + tracker rules.
   RegisterRule(TRuleIndentVisibilitySpecifiers.Create(TRuleMetadata.Make(
     'IndentVisibilitySpecifiers', rtTok, rfTokenStream, sevMinor, itCodeSmell,
-    cfHigh, True, cKeyIndentVisibility)));
+    cfHigh, True, cKeyIndentVisibility).WithDescription(
+    'Flags a visibility specifier not indented to the type declaration.')));
   RegisterMessage(cKeyIndentVisibility, SIndentVisibilitySpecifiers);
 
   RegisterRule(TRuleNoCommentedOutCode.Create(TRuleMetadata.Make(
     'NoCommentedOutCode', rtTok, rfTokenStream, sevMajor, itCodeSmell, cfMedium,
-    True, cKeyNoCommentedOutCode)));
+    True, cKeyNoCommentedOutCode).WithDescription(
+    'Flags commented-out code that should be removed.')));
   RegisterMessage(cKeyNoCommentedOutCode, SNoCommentedOutCode);
 
   RegisterRule(TRuleTrackNoSonar.Create(TRuleMetadata.Make(
     'TrackNoSonar', rtTok, rfTokenStream, sevInfo, itCodeSmell, cfHigh,
-    True, cKeyTrackNoSonar)));
+    True, cKeyTrackNoSonar).WithDescription(
+    'Reports where a NOSONAR suppression is used (tracking rule).')));
   RegisterMessage(cKeyTrackNoSonar, STrackNoSonar);
 
   RegisterRule(TRuleTrackComments.Create(TRuleMetadata.Make(
     'TrackComments', rtTok, rfTokenStream, sevInfo, itCodeSmell, cfHigh,
-    True, cKeyTrackComments)));
+    True, cKeyTrackComments).WithDescription(
+    'Reports comments matching a configured marker (tracking rule).')));
   RegisterMessage(cKeyTrackComments, STrackComments);
 
   RegisterRule(TRuleTrackStringLiterals.Create(TRuleMetadata.Make(
     'TrackStringLiterals', rtTok, rfTokenStream, sevInfo, itCodeSmell, cfHigh,
-    True, cKeyTrackStringLiterals)));
+    True, cKeyTrackStringLiterals).WithDescription(
+    'Reports string literals matching a configured pattern (tracking rule).')));
   RegisterMessage(cKeyTrackStringLiterals, STrackStringLiterals);
 
   // Visibility/field-section structure rules
   RegisterRule(TRuleCombineVisibilitySections.Create(TRuleMetadata.Make(
     'CombineVisibilitySections', rtTok, rfTokenStream, sevMinor, itCodeSmell,
-    cfHigh, True, cKeyCombineVisibilitySections)));
+    cfHigh, True, cKeyCombineVisibilitySections).WithDescription(
+    'Flags a visibility section that can be merged with the preceding one of the same kind.')));
   RegisterMessage(cKeyCombineVisibilitySections, SCombineVisibilitySections);
 
   RegisterRule(TRuleRemoveEmptyVisibilitySection.Create(TRuleMetadata.Make(
     'RemoveEmptyVisibilitySection', rtTok, rfTokenStream, sevMinor, itCodeSmell,
-    cfHigh, True, cKeyRemoveEmptyVisibilitySection)));
+    cfHigh, True, cKeyRemoveEmptyVisibilitySection).WithDescription(
+    'Flags an empty visibility section that can be removed.')));
   RegisterMessage(cKeyRemoveEmptyVisibilitySection, SRemoveEmptyVisibilitySection);
 
   RegisterRule(TRuleRemoveEmptyFieldSection.Create(TRuleMetadata.Make(
     'RemoveEmptyFieldSection', rtTok, rfTokenStream, sevMinor, itCodeSmell,
-    cfHigh, True, cKeyRemoveEmptyFieldSection)));
+    cfHigh, True, cKeyRemoveEmptyFieldSection).WithDescription(
+    'Flags an empty field section that can be removed.')));
   RegisterMessage(cKeyRemoveEmptyFieldSection, SRemoveEmptyFieldSection);
 
 end.

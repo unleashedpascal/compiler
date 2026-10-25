@@ -14,7 +14,6 @@
  **********************************************************************}
 unit utstQualityGate;
 
-{ EvaluateGate tests }
 
 {$mode objfpc}{$H+}
 
@@ -22,7 +21,7 @@ interface
 
 uses
   Classes, SysUtils, fpcunit, testregistry,
-  FpSonar.Types, FpSonar.Config, FpSonar.CLI.QualityGate;
+  FpSonar.Types, FpSonar.Config;
 
 type
   { Quality-gate evaluation tests. }
@@ -42,8 +41,7 @@ type
 
 implementation
 
-// Builds an issue array with the requested per-severity counts (in severity
-// order). Severity is the only field the gate reads.
+// Builds an issue array with the requested per-severity counts.
 function TQualityGateTest.MakeIssues(aInfo, aMinor, aMajor, aCritical,
   aBlocker: Integer): TFpSonarIssueArray;
 
@@ -79,7 +77,7 @@ var
 
 begin
   // Only Info/Minor/Major issues; default gate (blocker/critical = 0, rest -1).
-  lOutcome := EvaluateGate(MakeIssues(3, 2, 4, 0, 0), DefaultConfig.Gate);
+  lOutcome := TFpSonarConfig.Default.Gate.Evaluate(MakeIssues(3, 2, 4, 0, 0));
   AssertFalse('gate passes under thresholds', lOutcome.Failed);
   AssertEquals('exit 0 on pass', 0, lOutcome.ExitCode);
 end;
@@ -92,7 +90,7 @@ var
 
 begin
   // 1 Critical with the default gate (maxCritical = 0) => fail.
-  lOutcome := EvaluateGate(MakeIssues(0, 0, 0, 1, 0), DefaultConfig.Gate);
+  lOutcome := TFpSonarConfig.Default.Gate.Evaluate(MakeIssues(0, 0, 0, 1, 0));
   AssertTrue('gate fails on a critical', lOutcome.Failed);
   AssertEquals('exit 1 on fail', 1, lOutcome.ExitCode);
   AssertTrue('reason mentions critical',
@@ -113,7 +111,7 @@ begin
     lGate.MaxPerSeverity[lSev] := -1;
   lGate.MaxTotal := 5;
 
-  lOutcome := EvaluateGate(MakeIssues(0, 6, 0, 0, 0), lGate);
+  lOutcome := lGate.Evaluate(MakeIssues(0, 6, 0, 0, 0));
   AssertTrue('gate fails on total', lOutcome.Failed);
   AssertEquals('exit 1 on fail', 1, lOutcome.ExitCode);
   AssertTrue('reason mentions total', Pos('total', lOutcome.Reason) > 0);
@@ -133,7 +131,7 @@ begin
     lGate.MaxPerSeverity[lSev] := -1;
   lGate.MaxTotal := -1;
 
-  lOutcome := EvaluateGate(MakeIssues(0, 0, 0, 0, 10), lGate);
+  lOutcome := lGate.Evaluate(MakeIssues(0, 0, 0, 0, 10));
   AssertFalse('all-unlimited gate never trips', lOutcome.Failed);
   AssertEquals('exit 0', 0, lOutcome.ExitCode);
 end;
@@ -153,11 +151,11 @@ begin
   lGate.MaxTotal := -1;
 
   // count == max passes (only count > max fails).
-  lOutcome := EvaluateGate(MakeIssues(0, 0, 2, 0, 0), lGate);
+  lOutcome := lGate.Evaluate(MakeIssues(0, 0, 2, 0, 0));
   AssertFalse('2 Major with max 2 passes', lOutcome.Failed);
 
   // A 3rd Major trips it.
-  lOutcome := EvaluateGate(MakeIssues(0, 0, 3, 0, 0), lGate);
+  lOutcome := lGate.Evaluate(MakeIssues(0, 0, 3, 0, 0));
   AssertTrue('3 Major with max 2 fails', lOutcome.Failed);
 end;
 
@@ -170,14 +168,13 @@ var
   lOutcome: TFpSonarGateOutcome;
 
 begin
-  // Critical axis AND total both exceeded; severity order precedes total, so the
-  // reason must name critical, not total.
+  // Critical axis and total both exceeded; severity order precedes total.
   for lSev := Low(TFpSonarSeverity) to High(TFpSonarSeverity) do
     lGate.MaxPerSeverity[lSev] := -1;
   lGate.MaxPerSeverity[sevCritical] := 0;
   lGate.MaxTotal := 1;
 
-  lOutcome := EvaluateGate(MakeIssues(0, 0, 0, 2, 0), lGate);
+  lOutcome := lGate.Evaluate(MakeIssues(0, 0, 0, 2, 0));
   AssertTrue('gate fails', lOutcome.Failed);
   AssertTrue('reason names critical (severity before total)',
     Pos('critical', lOutcome.Reason) > 0);

@@ -1110,6 +1110,10 @@ implementation
           resultdef:=generrordef
          else
           resultdef:=left.resultdef;
+
+         if is_currency(resultdef) then
+           { Ensure actual parameters are scaled correctly }
+           Include(flags,nf_is_currency);
       end;
 
 
@@ -1791,6 +1795,8 @@ implementation
 
 
     constructor tcallnode.ppuload(t:tnodetype;ppufile:tcompilerppufile);
+      var
+        para : tcallparanode;
       begin
         callinitblock:=tblocknode(ppuloadnode(ppufile));
         methodpointer:=ppuloadnode(ppufile);
@@ -1799,6 +1805,18 @@ implementation
         callcleanupblock:=tblocknode(ppuloadnode(ppufile));
         funcretnode:=ppuloadnode(ppufile);
         inherited ppuload(t,ppufile);
+
+        if assigned(left) then
+          begin
+            { update callnode reference in parameter nodes }
+            para:=tcallparanode(left);
+            while assigned(para) do
+              begin
+                para.callnode:=self;
+                para:=tcallparanode(para.right);
+              end;
+          end;
+
         ppufile.getderef(symtableprocentryderef);
 { TODO: FIXME: No withsymtable support}
         symtableproc:=nil;
@@ -2197,7 +2215,7 @@ implementation
 
     procedure tcallnode.add_done_statement(n:tnode);
       var
-        lastdonestatement, before_firstpass : tstatementnode;
+        lastdonestatement, beforelast, before_firstpass : tstatementnode;
         was_first_statement : boolean;
       begin
         if not assigned(n) then
@@ -2212,12 +2230,26 @@ implementation
           end;
         lastdonestatement:=laststatement(callcleanupblock);
         was_first_statement:=(lastdonestatement=callcleanupblock.statements);
+        beforelast:=nil;
+        if not was_first_statement then
+          begin
+            beforelast:=tstatementnode(callcleanupblock.statements);
+            while assigned(beforelast) and (beforelast.right<>lastdonestatement) do
+              beforelast:=tstatementnode(beforelast.next);
+            if not assigned(beforelast) then
+              internalerror(2026071701);
+          end;
         { see comments in add_init_statement }
         addstatement(lastdonestatement,n);
         before_firstpass:=lastdonestatement;
         firstpass(tnode(lastdonestatement));
-        if was_first_statement and (lastdonestatement<>before_firstpass) then
-          callcleanupblock.statements:=lastdonestatement;
+        if (lastdonestatement<>before_firstpass) then
+          begin
+            if was_first_statement then
+              callcleanupblock.statements:=lastdonestatement
+            else if assigned(beforelast) then
+              beforelast.right:=lastdonestatement;
+          end;
         { Update expectloc for callcleanupblock }
         callcleanupblock.expectloc:=lastdonestatement.expectloc;
       end;
@@ -2763,7 +2795,14 @@ implementation
           exit;
         include(callnodeflags,cnf_call_self_node_done);
         if use_caller_self(true) then
-          call_self_node:=load_self_node;
+          begin
+            { in a "type of <SomePropOrMethod>" inside a record/object/class declaration
+              there is no self, the call is only typechecked, never generated }
+            if current_module.in_type_inquiry and
+               not assigned(get_local_or_para_sym('self')) then
+              exit;
+            call_self_node:=load_self_node;
+          end;
       end;
 
 
@@ -5102,6 +5141,9 @@ implementation
           typecheckpass(call_self_node);
         if assigned(call_vmt_node) then
           typecheckpass(call_vmt_node);
+
+        if is_currency(resultdef) then
+          Include(flags,nf_is_currency);
 
         if assigned(current_procinfo) and
             (procdefinition.typ=procdef) and

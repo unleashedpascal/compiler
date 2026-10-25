@@ -13,6 +13,7 @@
 
  **********************************************************************}
 
+{$ifndef FPC_NO_CLASSESINLINE}{$define CLASSESINLINE}{$endif}
 {$ifdef CLASSESINLINE}{$inline on}{$endif}
 {$MACRO ON}
 {$IFDEF FPC_DOTTEDUNITS}
@@ -496,8 +497,8 @@ Type
     FPosition: Integer;
   public
     constructor Create(AList: TFPList);
-    function GetCurrent: Pointer;
-    function MoveNext: Boolean;
+    function GetCurrent: Pointer; {$ifdef CLASSESINLINE} inline; {$endif CLASSESINLINE}
+    function MoveNext: Boolean; {$ifdef CLASSESINLINE} inline; {$endif CLASSESINLINE}
     property Current: Pointer read GetCurrent;
   end;
 
@@ -534,7 +535,7 @@ Type
     function Expand: TFPList; {$ifdef CLASSESINLINE} inline; {$endif CLASSESINLINE}
     function Extract(Item: Pointer): Pointer;
     function First: Pointer;
-    function GetEnumerator: TFPListEnumerator;
+    function GetEnumerator: TFPListEnumerator; {$ifdef CLASSESINLINE} inline; {$endif CLASSESINLINE}
     function Contains(Item: Pointer): boolean;
     function IndexOf(Item: Pointer): Integer;
     function IndexOfItem(Item: Pointer; Direction: TDirection): Integer;
@@ -618,7 +619,7 @@ Type
     function Expand: TList;
     function Extract(item: Pointer): Pointer;
     function First: Pointer; inline;
-    function GetEnumerator: TListEnumerator;
+    function GetEnumerator: TListEnumerator; {$ifdef CLASSESINLINE} inline; {$endif CLASSESINLINE}
     function Contains(Item: Pointer): boolean;
     function IndexOf(Item: Pointer): Integer; inline;
     procedure Insert(Index: Integer; Item: Pointer);
@@ -658,9 +659,11 @@ Type
 {TBits Class}
 
 type
-   TBitsBase = PtrInt;
+   TBitsBase = PtrUint;
    PBitsBase = ^TBitsBase;
-   TBitsBaseUnsigned = PtrUint;
+   TBitsBaseSigned = PtrInt;
+   TBitsOpTruth = 0 .. 15 {%1111};
+   TBitsOpCallback = function(A, B: TBitsBase): TBitsBase;
 
 const
    MaxBitFlags = High(SizeInt) - (bitsizeof(TBitsBase) - 1);
@@ -672,8 +675,8 @@ type
       FSize : SizeInt;  { total TBitsBases currently allocated }
       FBSize: SizeInt;  {total bits currently allocated}
       findIndex : SizeInt;
-      findXorMask : int8; { 0 (all zeros) or -1 (all ones), sign-extended to TBitsBase on read.
-                            0 is for searching ones, -1 is for searching zeros. }
+      findXorMask : TBitsBase; { 0 (all zeros) or High(TBitsBase) (all ones).
+                                 0 is for searching ones, High(TBitsBase) is for searching zeros. }
 
       function ScanFor1(start : SizeInt; xorMask : TBitsBase) : SizeInt;
       function ScanFor1Rev(start : SizeInt; xorMask : TBitsBase) : SizeInt;
@@ -684,7 +687,7 @@ type
    Protected
       procedure CheckBitIndex (Bit : SizeInt;CurrentSize : Boolean);
    public
-      constructor Create(TheSize : longint = 0); virtual;
+      constructor Create(aSize : SizeInt = 0); virtual;
       destructor Destroy; override;
       function  GetFSize : SizeInt;
       procedure SetOn(Bit : SizeInt);
@@ -699,15 +702,122 @@ type
       procedure Grow(NBit : SizeInt);
       function  Equals(Obj : TObject): Boolean; override; overload;
       function  Equals(BitSet : TBits) : Boolean; overload;
+
       procedure SetIndex(Index : SizeInt);
       function  FindFirstBit(State : boolean) : SizeInt;
       function  FindNextBit : SizeInt;
       function  FindPrevBit : SizeInt;
 
+      { Searches that store no state inside TBits. }
+      function Find(State: boolean; StartIndex: SizeInt): SizeInt;
+      function FindRev(State: boolean; StartIndex: SizeInt): SizeInt;
+      function Find0(StartIndex: SizeInt): SizeInt;
+      function Find0Rev(StartIndex: SizeInt): SizeInt;
+      function Find1(StartIndex: SizeInt): SizeInt;
+      function Find1Rev(StartIndex: SizeInt): SizeInt;
+
       { functions and properties to match TBits class }
       function OpenBit: SizeInt;
       property Bits[Bit: SizeInt]: Boolean read get write SetBit; default;
       property Size: SizeInt read FBSize write setSize;
+
+      { Bit moves. }
+      class procedure MoveRange(SrcBf: TBits; SrcPos: SizeInt; DstBf: TBits; DstPos, Count: SizeInt); static;
+      procedure MoveRange(SrcPos, DstPos, Count: SizeInt); inline;
+   private
+      procedure ValidateRange(Pos, Count: SizeInt);
+      procedure FitRange(Pos, Count: SizeInt);
+      procedure ThrowBadRange(Pos, Count: SizeInt);
+      class procedure MoveUnalignedSrcToAlignedDest(Src, Dst: PBitsBase; Count, Src1Bits: SizeInt); static;
+      class procedure MoveUnalignedSrcToAlignedDestRightToLeft(SrcR, DstR: PBitsBase; Count, Src0Bits: SizeInt); static;
+      class function ReadSmall(Src: PBitsBase; Pos, Count: SizeInt): TBitsBase; static;
+      class procedure Write1(Dst: PBitsBase; Pos, Count: SizeInt; Value: TBitsBase); static;
+
+   public
+      { Interpreting bits as numbers. }
+      function GetUint(Pos, Count: SizeInt): Cardinal;
+      procedure SetUint(Pos, Count: SizeInt; Value: Cardinal);
+
+      { Bitwise operations on subranges. }
+      procedure NotRange(Pos, Count: SizeInt);
+      procedure AndRange(Pos: SizeInt; B: TBits; BPos, Count: SizeInt); inline;
+      procedure OrRange(Pos: SizeInt; B: TBits; BPos, Count: SizeInt); inline;
+      procedure XorRange(Pos: SizeInt; B: TBits; BPos, Count: SizeInt); inline;
+      procedure AndNotRange(Pos: SizeInt; B: TBits; BPos, Count: SizeInt); inline;
+
+      { Generic two-input boolean operation. OpTruth is %XYZW of truth table:
+        A B | R
+        0 0 | W
+        0 1 | Z
+        1 0 | Y
+        1 1 | X }
+      procedure OpRange(Pos: SizeInt; BBf: TBits; BPos, Count: SizeInt; OpTruth: TBitsOpTruth);
+   private
+      class procedure OpAlignedAB(A, B: PBitsBase; Count: SizeInt; Op: TBitsOpCallback); static;
+      class procedure OpAlignedAUnalignedB(A, B: PBitsBase; Count, B1Bits: SizeInt; Op: TBitsOpCallback); static;
+      class procedure OpAlignedABRightToLeft(AR, BR: PBitsBase; Count: SizeInt; Op: TBitsOpCallback); static;
+      class procedure OpAlignedAUnalignedBRightToLeft(AR, BR: PBitsBase; Count, B0Bits: SizeInt; Op: TBitsOpCallback); static;
+
+      class function _0001_Nor(A, B: TBitsBase): TBitsBase; static;
+      class function _0010_AInhibitsB(A, B: TBitsBase): TBitsBase; static;
+      class function _0100_BInhibitsA(A, B: TBitsBase): TBitsBase; static;
+      class function _0110_Xor(A, B: TBitsBase): TBitsBase; static;
+      class function _0111_Nand(A, B: TBitsBase): TBitsBase; static;
+      class function _1000_And(A, B: TBitsBase): TBitsBase; static;
+      class function _1001_Equiv(A, B: TBitsBase): TBitsBase; static;
+      class function _1011_AImpliesB(A, B: TBitsBase): TBitsBase; static;
+      class function _1101_BImpliesA(A, B: TBitsBase): TBitsBase; static;
+      class function _1110_Or(A, B: TBitsBase): TBitsBase; static;
+
+   public
+      { Fill subrange with 0s or 1s. }
+      procedure ClearRange(Pos, Count: SizeInt);
+      procedure SetRange(Pos, Count: SizeInt);
+
+      { Count 1s in subrange. }
+      function PopCount(Pos, Count: SizeInt; Lim: SizeInt = High(SizeInt)): SizeInt;
+      { Count 1s in AndRange. }
+      function IntersectionPopCount(Pos: SizeInt; BBf: TBits; BPos, Count: SizeInt; Lim: SizeInt = High(SizeInt)): SizeInt;
+      { Shortcut for "IntersectionPopCount > 0". }
+      function HasIntersection(Pos: SizeInt; B: TBits; BPos, Count: SizeInt): boolean; inline;
+   private
+      class function IntersectionPopCountAlignedAB(A, B: PBitsBase; Count, Lim: SizeInt): SizeInt; static;
+      class function IntersectionPopCountAlignedAUnalignedB(A, B: PBitsBase; Count, B1Bits, Lim: SizeInt): SizeInt; static;
+
+   public
+      { Convert to portable bitfield with byte base type. }
+      function DumpBinary(Pos, Count: SizeInt; Bin: PByte; BinAvail: SizeInt): SizeInt;
+   private
+{$ifndef endian_little}
+      class procedure DumpBinaryAligned(B: PBitsBase; Count: SizeInt; Bin: PByte); static;
+{$endif}
+      class procedure DumpBinaryUnaligned(B: PBitsBase; B1Bits, Count: SizeInt; Bin: PByte); static;
+      class procedure ThrowInsufficientBuffer(Required, Avail: SizeInt); static;
+
+   public
+      { Load from portable bitfield with byte base type. }
+      function LoadBinary(Pos, Count: SizeInt; Bin: PByte; BinAvail: SizeInt): SizeInt;
+   private
+{$ifndef endian_little}
+      class procedure LoadBinaryAligned(B: PBitsBase; Count: SizeInt; Bin: PByte); static;
+{$endif}
+      class procedure LoadBinaryUnaligned(B: PBitsBase; Count: SizeInt; Bin: PByte; Bin1Bits: SizeInt); static;
+      class function ReadSmallBinary(Bin: PByte; Pos, Count: SizeInt): TBitsBase; static;
+
+   public
+      { Convert to text. }
+      function DumpText(Pos, Count: SizeInt; const S0, S1: string; Buf: PChar; BufAvail: SizeInt): SizeInt;
+      function DumpText(Pos, Count: SizeInt; const S0, S1: string): string;
+   private
+      function DumpTextCC(Pos, Count: SizeInt; C0, C1: Char; Buf: PChar; BufAvail: SizeInt): SizeInt;
+
+   public
+      { Load from text. }
+      function LoadText(Pos, Count: SizeInt; const S0, S1: string; Buf: PChar; BufAvail: SizeInt): SizeInt;
+      procedure LoadText(Pos, Count: SizeInt; const S0, S1, Src: string);
+   private
+      function LoadTextCC(Pos, Count: SizeInt; C0, C1: Char; Buf: PChar; BufAvail: SizeInt): SizeInt;
+      class procedure ThrowLoadTextError(BufAvail: SizeInt; const S0, S1: string); static;
    end;
 
 { TPersistent abstract class }
@@ -796,8 +906,8 @@ type
     FPosition: Integer;
   public
     constructor Create(ACollection: TCollection);
-    function GetCurrent: TCollectionItem;
-    function MoveNext: Boolean;
+    function GetCurrent: TCollectionItem; {$ifdef CLASSESINLINE} inline; {$endif CLASSESINLINE}
+    function MoveNext: Boolean; {$ifdef CLASSESINLINE} inline; {$endif CLASSESINLINE}
     property Current: TCollectionItem read GetCurrent;
   end;
 
@@ -842,7 +952,7 @@ type
     procedure Clear;
     procedure EndUpdate; virtual;
     procedure Delete(Index: Integer);
-    function GetEnumerator: TCollectionEnumerator;
+    function GetEnumerator: TCollectionEnumerator; {$ifdef CLASSESINLINE} inline; {$endif CLASSESINLINE}
     function GetNamePath: string; override;
     function Insert(Index: Integer): TCollectionItem;
     function FindItemID(ID: Integer): TCollectionItem;
@@ -883,8 +993,8 @@ type
     FPosition: Integer;
   public
     constructor Create(AStrings: TStrings);
-    function GetCurrent: String;
-    function MoveNext: Boolean;
+    function GetCurrent: String; {$ifdef CLASSESINLINE} inline; {$endif CLASSESINLINE}
+    function MoveNext: Boolean; {$ifdef CLASSESINLINE} inline; {$endif CLASSESINLINE}
     property Current: String read GetCurrent;
   end;
 
@@ -968,6 +1078,8 @@ type
     property UpdateCount: Integer read FUpdateCount;
     Function DoCompareText(const s1,s2 : string) : PtrInt; virtual;
     Function GetDelimitedText: string;
+    // The strings joined with aDelimiter, quoted with aQuoteChar where needed, as in DelimitedText.
+    Function DoGetDelimitedText(aDelimiter, aQuoteChar: Char; aStrictDelimiter: Boolean): string;
     Procedure SetDelimitedText(Const AValue: string);
     Function GetValueFromIndex(Index: Integer): string;
     Procedure SetValueFromIndex(Index: Integer; const Value: string);
@@ -1017,7 +1129,7 @@ type
     procedure ForEach(aCallback: TStringsForeachMethod);
     procedure ForEach(aCallback: TStringsForeachMethodEx);
     procedure ForEach(aCallback: TStringsForeachMethodExObj);
-    function GetEnumerator: TStringsEnumerator;
+    function GetEnumerator: TStringsEnumerator; {$ifdef CLASSESINLINE} inline; {$endif CLASSESINLINE}
     procedure GetNameValue(Index : Integer; Out AName,AValue : String);
     function GetText: PChar; virtual;
     function Contains(const S: string): Boolean;
@@ -1782,6 +1894,8 @@ type
     {$ScopedEnums off}
     const
       UnitnameSeparator = '/';
+      // Stream ordinal of vaDouble in Delphi streams.
+      DelphiDoubleValue = 21;
   protected
     FStream: TStream;
     FBuffer: Pointer;
@@ -1790,7 +1904,9 @@ type
     FBufEnd: Integer;
     FVersion: TBOVersion;
     FCurrentValue : TValueType;
+    FDelphiCompatible : Boolean;
     Function CurrentValue : TValueType; override;
+    function ByteToValueType(aValue: Byte): TValueType;
     function ReadWord : word; {$ifdef CLASSESINLINE}inline;{$endif CLASSESINLINE}
     function ReadDWord : longword; {$ifdef CLASSESINLINE}inline;{$endif CLASSESINLINE}
     function ReadQWord : qword; {$ifdef CLASSESINLINE}inline;{$endif CLASSESINLINE}
@@ -1836,6 +1952,8 @@ type
     procedure SkipComponent(SkipComponentInfos: Boolean); override;
     procedure SkipValue; override;
     property Version: TBOVersion read FVersion;
+    // Read value type 21 as vaDouble, as written by Delphi, instead of vaUString.
+    property DelphiCompatible: Boolean read FDelphiCompatible write FDelphiCompatible;
   end;
 
 
@@ -1893,6 +2011,8 @@ type
     FRawMode : Boolean;
     FCanHandleExcepts: Boolean;
     FOnReadStringProperty:TReadWriteStringPropertyEvent;
+    function GetDelphiCompatible: Boolean;
+    procedure SetDelphiCompatible(aValue: Boolean);
     procedure DoFixupReferences;
     function FindComponentClass(const AName, anUnitName, AClassName: rawbytestring): TComponentClass;
     procedure Lock;
@@ -1977,6 +2097,8 @@ type
     property OnFindComponentClassEx: TFindComponentClassExEvent read FOnFindComponentClassEx write FOnFindComponentClassEx;
     property OnReadStringProperty: TReadWriteStringPropertyEvent read FOnReadStringProperty write FOnReadStringProperty;
     Property RawMode : Boolean Read FRawMode Write FRawMode;
+    // DelphiCompatible of the driver, if it is a TBinaryObjectReader.
+    property DelphiCompatible: Boolean read GetDelphiCompatible write SetDelphiCompatible;
   end;
 
 
@@ -2008,6 +2130,8 @@ type
 {$ifndef FPUNONE}
     procedure WriteFloat(const Value: Extended); virtual; abstract;
     procedure WriteSingle(const Value: Single); virtual; abstract;
+    // Write a vaDouble value; the default implementation calls WriteFloat.
+    procedure WriteDouble(const Value: Double); virtual;
     procedure WriteDate(const Value: TDateTime); virtual; abstract;
 {$endif}
     procedure WriteCurrency(const Value: Currency); virtual; abstract;
@@ -2032,6 +2156,7 @@ type
     FBufPos: Integer;
     FBufEnd: Integer;
     FVersion: TBinaryObjectReader.TBOVersion;
+    FDelphiCompatible: Boolean;
     procedure WriteWord(w : word); {$ifdef CLASSESINLINE}inline;{$endif CLASSESINLINE}
     procedure WriteDWord(lw : longword); {$ifdef CLASSESINLINE}inline;{$endif CLASSESINLINE}
     procedure WriteQWord(qw : qword); {$ifdef CLASSESINLINE}inline;{$endif CLASSESINLINE}
@@ -2059,6 +2184,7 @@ type
 {$ifndef FPUNONE}
     procedure WriteFloat(const Value: Extended); override;
     procedure WriteSingle(const Value: Single); override;
+    procedure WriteDouble(const Value: Double); override;
     procedure WriteDate(const Value: TDateTime); override;
 {$endif}
     procedure WriteCurrency(const Value: Currency); override;
@@ -2074,6 +2200,8 @@ type
     procedure WriteVariant(const VarValue: Variant);override;
 
     property Version: TBinaryObjectReader.TBOVersion read FVersion write FVersion;
+    // Write only value types known to Delphi: vaWString for vaUString, vaInt64 for vaQWord, 21 for vaDouble, version 0 signature.
+    property DelphiCompatible: Boolean read FDelphiCompatible write FDelphiCompatible;
   end;
 
   TTextObjectWriter = class(TAbstractObjectWriter)
@@ -2099,6 +2227,8 @@ type
     FOnFindAncestor: TFindAncestorEvent;
     FOnWriteMethodProperty: TWriteMethodPropertyEvent;
     FOnWriteStringProperty:TReadWriteStringPropertyEvent;
+    function GetDelphiCompatible: Boolean;
+    procedure SetDelphiCompatible(aValue: Boolean);
     procedure AddToAncestorList(Component: TComponent);
     procedure WriteComponentData(Instance: TComponent);
     Procedure DetermineAncestor(Component: TComponent);
@@ -2133,6 +2263,8 @@ type
 {$ifndef FPUNONE}
     procedure WriteFloat(const Value: Extended);
     procedure WriteSingle(const Value: Single);
+    // Write Value as vaDouble.
+    procedure WriteDouble(const Value: Double);
     procedure WriteDate(const Value: TDateTime);
 {$endif}
     procedure WriteCurrency(const Value: Currency);
@@ -2155,6 +2287,8 @@ type
 
     property Driver: TAbstractObjectWriter read FDriver;
     property PropertyPath: string read FPropPath;
+    // DelphiCompatible of the driver, if it is a TBinaryObjectWriter.
+    property DelphiCompatible: Boolean read GetDelphiCompatible write SetDelphiCompatible;
   end;
 
 
@@ -2263,6 +2397,14 @@ type
       Next: PThreadQueueEntry;
       ExecuteAfter : TDateTime;
     end;
+    PTerminateInfo = ^TTerminateInfo;
+    // state of the thread function while DoTerminate runs
+    TTerminateInfo = record
+      // set when the OnTerminate handler destroyed the thread object
+      Freed: Boolean;
+      // synchronize entry of the destroyed thread object, disposed by the thread function
+      SyncEntry: PThreadQueueEntry;
+    end;
   public type
     TSystemTimes = record
       IdleTime: QWord;
@@ -2283,6 +2425,10 @@ type
     FFatalException: TObject;
     FExternalThread, FThreadQueueLockCounted: Boolean;
     FSynchronizeEntry: PThreadQueueEntry;
+    // the thread function's TTerminateInfo while DoTerminate runs
+    FTerminateInfo: PTerminateInfo;
+    // True while CallOnTerminate runs the OnTerminate handler of a running thread
+    FInOnTerminate: Boolean;
     class function GetCurrentThread: TThread; static;
     class function GetIsSingleProcessor: Boolean; static; inline;
     class procedure InternalQueue(aThread: TThread; aMethod: TThreadMethod; aQueueIfMain: Boolean; aExecuteAfter: TDateTime); static;
@@ -2296,6 +2442,7 @@ type
     function GetSuspended: Boolean;
     procedure InitSynchronizeEvent;
     procedure DoneSynchronizeEvent;
+    procedure ReleaseTerminateInfo;
     { these two need to be implemented per platform }
     procedure SysCreate(CreateSuspended: Boolean;
                              const StackSize: SizeUInt);
@@ -2327,6 +2474,8 @@ type
     FInitialSuspended: boolean;
     FSuspendedInternal: longbool;
     FThreadReaped: boolean;
+    // number of threads in WaitFor, plus WaitStateDone once a FreeOnTerminate thread finished
+    FWaitState: longint;
 {$endif}
 {$ifdef netwlibc}
   private
@@ -2449,8 +2598,8 @@ type
     FPosition: Integer;
   public
     constructor Create(AComponent: TComponent);
-    function GetCurrent: TComponent;
-    function MoveNext: Boolean;
+    function GetCurrent: TComponent; {$ifdef CLASSESINLINE} inline; {$endif CLASSESINLINE}
+    function MoveNext: Boolean; {$ifdef CLASSESINLINE} inline; {$endif CLASSESINLINE}
     property Current: TComponent read GetCurrent;
   end;
 
@@ -2552,7 +2701,7 @@ type
     procedure FreeNotification(AComponent: TComponent);
     procedure RemoveFreeNotification(AComponent: TComponent);
     procedure FreeOnRelease;
-    function GetEnumerator: TComponentEnumerator;
+    function GetEnumerator: TComponentEnumerator; {$ifdef CLASSESINLINE} inline; {$endif CLASSESINLINE}
     function GetNamePath: string; override;
     function GetParentComponent: TComponent; dynamic;
     function HasParent: Boolean; dynamic;
@@ -2678,8 +2827,8 @@ type
     FPosition: Integer;
   public
     constructor Create(AList: TInterfaceList);
-    function GetCurrent: IUnknown;
-    function MoveNext: Boolean;
+    function GetCurrent: IUnknown; {$ifdef CLASSESINLINE} inline; {$endif CLASSESINLINE}
+    function MoveNext: Boolean; {$ifdef CLASSESINLINE} inline; {$endif CLASSESINLINE}
     property Current: IUnknown read GetCurrent;
   end;
 
@@ -2708,7 +2857,7 @@ type
     procedure Delete(index : Integer);
     procedure Exchange(index1,index2 : Integer);
     function First : IUnknown;
-    function GetEnumerator: TInterfaceListEnumerator;
+    function GetEnumerator: TInterfaceListEnumerator; {$ifdef CLASSESINLINE} inline; {$endif CLASSESINLINE}
     function IndexOf(const item : IUnknown) : Integer;
     function Add(item : IUnknown) : Integer;
     procedure Insert(i : Integer;item : IUnknown);
@@ -2854,6 +3003,8 @@ var
     AxRegType: TActiveXRegType) = nil;
   CurrentGroup: Integer = -1;}
   CreateVCLComObjectProc: procedure(Component: TComponent) = nil;
+  // Initial value of DelphiCompatible for new binary object readers and writers.
+  DelphiCompatibleStreams: Boolean = False;
 
 { Point and rectangle constructors }
 

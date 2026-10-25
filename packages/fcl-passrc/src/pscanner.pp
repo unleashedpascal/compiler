@@ -349,7 +349,10 @@ type
     msOmitRTTI,            { pas2js: treat class section 'published' as 'public' and typeinfo does not work on symbols declared with this switch }
     msMultiLineStrings,     { pas2js: Multiline strings }
     msDelphiMultiLineStrings, { Delpi-compatible multiline strings }
-    msInlineVars              { Allow inline var declarations }
+    msInlineVars,             { Allow inline var declarations }
+    msStatementExpressions,   { allow if-expressions }
+    msTypeInquiry,            { allow "type of" operator }
+    msRecordComposition       { allow "contains" in records }
     );
   TModeSwitches = Set of TModeSwitch;
 
@@ -389,7 +392,9 @@ type
     bsScopedEnums,
     bsObjectChecks,   // check methods 'Self' and object type casts
     bsPointerMath,    // pointer arithmetic
-    bsGoto       // support label and goto, set by {$goto on|off}
+    bsGoto,      // support label and goto, set by {$goto on|off}
+    bsVarPropSetter, // allow property setters with a var value parameter ({$varpropsetter on})
+    bsBitPacking  // {$bitpacking on}: `packed` records/arrays are bit-packed
     );
   TBoolSwitches = set of TBoolSwitch;
 const
@@ -423,11 +428,13 @@ const
     );
 
   bsAll = [low(TBoolSwitch)..high(TBoolSwitch)];
-  bsFPCMode: TBoolSwitches = [bsPointerMath,bsWriteableConst];
-  bsObjFPCMode: TBoolSwitches = [bsPointerMath,bsWriteableConst];
-  bsDelphiMode: TBoolSwitches = [bsWriteableConst,bsGoto];
-  bsDelphiUnicodeMode: TBoolSwitches = [bsWriteableConst,bsGoto];
-  bsMacPasMode: TBoolSwitches = [bsPointerMath,bsWriteableConst];
+  // bsExtendedSyntax ($X) is ON by default in all modes (so a function result
+  // may be discarded as a statement); {$X-} turns it off.
+  bsFPCMode: TBoolSwitches = [bsPointerMath,bsWriteableConst,bsExtendedSyntax];
+  bsObjFPCMode: TBoolSwitches = [bsPointerMath,bsWriteableConst,bsExtendedSyntax];
+  bsDelphiMode: TBoolSwitches = [bsWriteableConst,bsGoto,bsExtendedSyntax];
+  bsDelphiUnicodeMode: TBoolSwitches = [bsWriteableConst,bsGoto,bsExtendedSyntax];
+  bsMacPasMode: TBoolSwitches = [bsPointerMath,bsWriteableConst,bsExtendedSyntax];
 
 type
   TValueSwitch = (
@@ -446,7 +453,7 @@ const
      'com', // vsInterfaces
      'Msg', // vsDispatchField
      'MsgStr', // vsDispatchStrField
-     '0', // vsMinEnumSize (0 = natural size)
+     '4', // vsMinEnumSize (FPC mode default; Delphi/TP use 1, MacPas 2)
      '0', // vsPackSet (0 = natural)
      '0' // vsPackRecords (0 = natural alignment)
      );
@@ -739,7 +746,10 @@ type
     po_AsmPascalComments,    // Allow pascal comments/directives in asm blocks
     po_AllowMem,             // Allow use of meml, mem, memw arrays
     po_WarnResourceNotFound, // Do not raise error if resource not found.
-    po_CheckDirectiveRTTI    // parse $RTTI directive and error on invalid
+    po_CheckDirectiveRTTI,   // parse $RTTI directive and error on invalid
+    po_AllowPointerToSpecialize, // allow ^specialize Type<Params> inline-specialized pointer types
+    po_StrictClassHelperMode, // "class helper" requires msClass (real-FPC: reject it in fpc/tp mode)
+    po_IntfMethodModifiers   // allow and ignore virtual/dynamic/abstract/override/reintroduce on an interface method (real-FPC)
     );
   TPOptions = set of TPOption;
 
@@ -768,6 +778,11 @@ type
   TResourceHandler = Procedure (Sender : TObject; const aFileName : String; aOptions : TStrings) of object;
 
   TPasScannerTokenPos = {$ifdef UsePChar}PAnsiChar{$else}integer{$endif};
+  TPasDirectiveState = record
+    BoolSwitches: TBoolSwitches;
+    ModeSwitches: TModeSwitches;
+    ValueSwitches: TValueSwitchArray;
+  end;
 
   TPascalScanner = class
   private
@@ -795,6 +810,8 @@ type
     FCurrentBoolSwitches: TBoolSwitches;
     FCurrentModeSwitches: TModeSwitches;
     FCurrentValueSwitches: TValueSwitchArray;
+    // {$push}/{$pop} saved directive state (bool/mode/value switches)
+    FDirectiveStateStack: array of TPasDirectiveState;
     FCurtokenEscaped: Boolean;
     FCurTokenPos: TPasSourcePos;
     FLastMsg: String;
@@ -884,6 +901,8 @@ type
     procedure Error(MsgNumber: integer; const Msg: TPasScannerString); overload;
     procedure Error(MsgNumber: integer; const Fmt: TPasScannerString; Args: array of const); overload;
     procedure PushSkipMode;
+    procedure HandleDirectivePush;
+    procedure HandleDirectivePop;
     function GetMultiLineStringLineEnd(aReader: TLineReader): TPasScannerString;
     function MakeLibAlias(const LibFileName: TPasScannerString): TPasScannerString; virtual;
 
@@ -1217,7 +1236,10 @@ const
     'OMITRTTI',
     'MULTILINESTRINGS',
     'DELPHIMULTILINESTRINGS',
-    'INLINEVARS'
+    'INLINEVARS',
+    'STATEMENTEXPRESSIONS',
+    'TYPEINQUIRY',
+    'RECORDCOMPOSITION'
     );
 
   LetterSwitchNames: array['A'..'Z'] of TPasScannerString=(
@@ -1281,7 +1303,9 @@ const
     'ScopedEnums',
     'ObjectChecks',
     'PointerMath',
-    'Goto'
+    'Goto',
+    'VarPropSetter',
+    'BitPacking'
     );
 
   ValueSwitchNames: array[TValueSwitch] of TPasScannerString = (
@@ -1309,7 +1333,7 @@ const
      msProperty,msDefaultInline,msExcept,msAdvancedRecords,msTypeHelpers,
      msPrefixedAttributes,msArrayOperators,msImplicitFunctionSpec,
      msFunctionReferences,msAnonymousFunctions,msDelphiMultiLineStrings,
-     msInlineVars
+     msInlineVars,msStatementExpressions
      ];
 
   DelphiUnicodeModeSwitches = delphimodeswitches + [msSystemCodePage,msDefaultUnicodestring];
@@ -1321,7 +1345,7 @@ const
 
   OBJFPCModeSwitches =  [msObjfpc,msClass,msObjpas,msResult,msStringPchar,msNestedComment,
     msRepeatForward,msCVarSupport,msInitFinal,msOut,msDefaultPara,msHintDirective,
-    msProperty,msDefaultInline,msExcept,msDelphiMultiLineStrings];
+    msProperty,msDefaultInline,msExcept,msDelphiMultiLineStrings,msTypeInquiry];
 
   TPModeSwitches = [msTP7,msTPProcVar,msDuplicateNames];
 
@@ -1336,7 +1360,7 @@ const
 
   ExtPasModeSwitches = [msExtpas,msTPProcVar,msDuplicateNames,msNestedProcVars,
     msNonLocalGoto,msISOLikeUnaryMinus,msISOLikeIO,msISOLikeProgramsPara,
-    msISOLikeMod];
+    msISOLikeMod,msTypeInquiry];
 
 function StrToModeSwitch(aName: TPasScannerString): TModeSwitch;
 function ModeSwitchesToStr(Switches: TModeSwitches): TPasScannerString;
@@ -1432,21 +1456,53 @@ begin
     end;
 end;
 
-function IndexOfToken(Const AToken : TPasScannerString) : Integer;
+function CompareLowerCased(Const AWord,ALower : TPasScannerString) : Integer;
+// AWord against a word that is already lower case, folding A..Z of AWord as the
+// comparison goes. This saves making a lower cased copy of AWord, which is one
+// heap allocation for every identifier the scanner reads. The order is the one
+// SortTokenInfo sorted the table in: character for character, and the shorter
+// word first when one is the start of the other.
 
 var
-  B,T,M : Integer;
-  N : TPasScannerString;
+  I,L,CA,CB : Integer;
+
+begin
+  L:=Length(AWord);
+  if Length(ALower)<L then
+    L:=Length(ALower);
+  for I:=1 to L do
+    begin
+    CA:=Ord(AWord[I]);
+    if (CA>=Ord('A')) and (CA<=Ord('Z')) then
+      Inc(CA,Ord('a')-Ord('A'));
+    CB:=Ord(ALower[I]);
+    if CA<>CB then
+      begin
+      if CA<CB then
+        Exit(-1)
+      else
+        Exit(1);
+      end;
+    end;
+  Result:=Length(AWord)-Length(ALower);
+end;
+
+
+function IndexOfToken(Const AToken : TPasScannerString) : Integer;
+// The place of AToken in SortedTokens, whatever case it is written in, or -1.
+
+var
+  B,T,M,C : Integer;
 begin
   B:=0;
   T:=Length(SortedTokens)-1;
   while (B<=T) do
     begin
     M:=(B+T) div 2;
-    N:=LowerCaseTokens[SortedTokens[M]];
-    if (AToken<N) then
+    C:=CompareLowerCased(AToken,LowerCaseTokens[SortedTokens[M]]);
+    if C<0 then
       T:=M-1
-    else if (AToken=N) then
+    else if C=0 then
       Exit(M)
     else
       B:=M+1;
@@ -1462,7 +1518,7 @@ Var
 begin
   if (Length(SortedTokens)=0) then
     SortTokenInfo;
-  I:=IndexOfToken(LowerCase(AToken));
+  I:=IndexOfToken(AToken);
   Result:=I<>-1;
   If Result then
     T:=SortedTokens[I];
@@ -2161,6 +2217,12 @@ begin
     FToken:=tkDivision;
     inc(FTokenEnd);
     end;
+  ',':
+    begin
+    // comma separates generic parameter placeholders in declared(TFoo<,>)
+    FToken:=tkComma;
+    inc(FTokenEnd);
+    end;
   '''':
     begin
     FToken:=tkString;
@@ -2357,6 +2419,40 @@ begin
           if FToken=tkIdentifier then
             begin
             Param:=GetTokenString;
+            NextToken;
+            // Support generic parameter count syntax: declared(TFoo<>),
+            // declared(TFoo<,>), declared(TFoo<,,>), etc.
+            if FToken=tkNotEqual then
+              begin
+              // <> = 1 type param
+              Param:=Param+'<>';
+              NextToken;
+              end
+            else if FToken=tkLessThan then
+              begin
+              // <,> = 2 params, <,,> = 3 params, etc.
+              Param:=Param+'<';
+              NextToken;
+              while FToken=tkComma do
+                begin
+                Param:=Param+',';
+                NextToken;
+                end;
+              if FToken=tkGreaterThan then
+                begin
+                Param:=Param+'>';
+                NextToken;
+                end;
+              end;
+            end
+          else if FToken=tkString then
+            begin
+            // string-literal argument, e.g. fileexists('foo.pp'). Take the raw
+            // token text and strip the surrounding quotes (GetStringLiteralValue
+            // is unsuitable here — it scans to end-of-expression).
+            Param:=GetTokenString;
+            if (Length(Param)>=2) and (Param[1]='''') and (Param[Length(Param)]='''') then
+              Param:=Copy(Param,2,Length(Param)-2);
             NextToken;
             end;
           if FToken<>tkBraceClose then
@@ -3103,9 +3199,13 @@ function TFileResolver.FindIncludeFileName(const AName: String): String;
 
   begin
     Result:='';
-    // search in BaseDirectory (not in mode Delphi)
-    if (BaseDirectory<>'')
-        and ((ModuleDirectory='') or not (Mode in [msDelphi,msDelphiUnicode])) then
+    // search in BaseDirectory. BaseDirectory tracks the directory of the file
+    // that contains the {$I} directive (updated on each include descent), which
+    // is exactly where Delphi resolves an include relative to — so search it in
+    // Delphi mode as well, otherwise a nested include's sibling (a.inc pulling in
+    // b.inc from the same dir) is not found once ModuleDirectory (the root unit's
+    // dir) differs from it.
+    if (BaseDirectory<>'') then
       begin
       Result:=SearchLowUpCase(BaseDirectory+FN);
       if Result<>'' then exit;
@@ -3966,6 +4066,22 @@ begin
           repeat
             Inc(FTokenPos);
           until {$ifdef UsePChar}not (FTokenPos[0] in HexDigits){$else}(FTokenPos>l) or not (s[FTokenPos] in HexDigits){$endif};
+        end
+        else if {$ifdef UsePChar}FTokenPos[0]='&'{$else}(FTokenPos<l) and (s[FTokenPos]='&'){$endif} then
+        begin
+          // #&octal char code
+          Inc(FTokenPos);
+          repeat
+            Inc(FTokenPos);
+          until {$ifdef UsePChar}not (FTokenPos[0] in ['0'..'7']){$else}(FTokenPos>l) or not (s[FTokenPos] in ['0'..'7']){$endif};
+        end
+        else if {$ifdef UsePChar}FTokenPos[0]='%'{$else}(FTokenPos<l) and (s[FTokenPos]='%'){$endif} then
+        begin
+          // #%binary char code
+          Inc(FTokenPos);
+          repeat
+            Inc(FTokenPos);
+          until {$ifdef UsePChar}not (FTokenPos[0] in ['0','1']){$else}(FTokenPos>l) or not (s[FTokenPos] in ['0','1']){$endif};
         end else
           repeat
             Inc(FTokenPos);
@@ -4218,6 +4334,22 @@ begin
           repeat
             Inc(FTokenPos);
           until {$ifdef UsePChar}not (FTokenPos[0] in HexDigits){$else}(FTokenPos>l) or not (s[FTokenPos] in HexDigits){$endif};
+        end
+        else if {$ifdef UsePChar}FTokenPos[0]='&'{$else}(FTokenPos<l) and (s[FTokenPos]='&'){$endif} then
+        begin
+          // #&octal char code
+          Inc(FTokenPos);
+          repeat
+            Inc(FTokenPos);
+          until {$ifdef UsePChar}not (FTokenPos[0] in ['0'..'7']){$else}(FTokenPos>l) or not (s[FTokenPos] in ['0'..'7']){$endif};
+        end
+        else if {$ifdef UsePChar}FTokenPos[0]='%'{$else}(FTokenPos<l) and (s[FTokenPos]='%'){$endif} then
+        begin
+          // #%binary char code
+          Inc(FTokenPos);
+          repeat
+            Inc(FTokenPos);
+          until {$ifdef UsePChar}not (FTokenPos[0] in ['0','1']){$else}(FTokenPos>l) or not (s[FTokenPos] in ['0','1']){$endif};
         end else
           repeat
             Inc(FTokenPos);
@@ -4382,6 +4514,11 @@ begin
       {$ENDIF}
       SingleQuote:
         begin
+          // The closing delimiter is a contiguous run of exactly QuoteLen quotes.
+          // Reset per run so quote-runs shorter than QuoteLen (e.g. '''multiline'''
+          // inside a 5-quote block) are treated as literal content, not accumulated
+          // across runs into a false closing delimiter.
+          QuoteCount:=0;
           repeat
             inc(FTokenPos);
             inc(QuoteCount);
@@ -4884,15 +5021,18 @@ end;
 
 procedure TPascalScanner.HandlePackValue(vs: TValueSwitch; const Param: TPasScannerString);
 // {$MINENUMSIZE/$PACKENUM/$PACKSET/$PACKRECORDS n}: n is 1/2/4/8, or
-// "default"/"normal" (-> 0 = natural).
+// "default"/"normal" (4 for an enum, else 0 = natural).
 var
   S: TPasScannerString;
 begin
   if not (vs in AllowedValueSwitches) then
     Error(nWarnIllegalCompilerDirectiveX,sWarnIllegalCompilerDirectiveX,[ValueSwitchNames[vs]]);
   S:=Trim(Param);
-  if SameText(S,'DEFAULT') or SameText(S,'NORMAL') then
-    S:='0';
+  if SameText(S,'DEFAULT') or SameText(S,'NORMAL') or SameText(S,'FIXED') then
+    if vs=vsMinEnumSize then
+      S:='4'
+    else
+      S:='0';
   CurrentValueSwitch[vs]:=S;
 end;
 
@@ -4944,8 +5084,19 @@ begin
   Result:=tkComment;
   if (Param<>'') and (Param[1]='%') then
     begin
-    FCurTokenString:=''''+Param+'''';
-    FCurToken:=tkString;
+    // {$I %LINENUM%} / {$I %LINE%} expand to the current line number as a NUMERIC
+    // literal (usable in integer contexts, e.g. Halt({$I %LINENUM%})); all other
+    // %macros% expand to string constants.
+    if SameText(Param,'%LINENUM%') or SameText(Param,'%LINE%') then
+      begin
+      FCurTokenString:=IntToStr(CurRow);
+      FCurToken:=tkNumber;
+      end
+    else
+      begin
+      FCurTokenString:=''''+Param+'''';
+      FCurToken:=tkString;
+      end;
     Result:=FCurToken;
     end
   else
@@ -4981,6 +5132,22 @@ procedure TPascalScanner.HandleMode(const Param: TPasScannerString);
         UnsetNonToken(tkotherwise)
       else
         SetNonToken(tkotherwise);
+      // Enum and set storage defaults of the mode, as fpc sets them.
+      case LangMode of
+      msDelphi,msDelphiUnicode,msTP7:
+        begin
+        CurrentValueSwitch[vsMinEnumSize]:='1';
+        CurrentValueSwitch[vsPackSet]:='1';
+        end;
+      msMac:
+        begin
+        CurrentValueSwitch[vsMinEnumSize]:='2';
+        CurrentValueSwitch[vsPackSet]:='0';
+        end;
+      else
+        CurrentValueSwitch[vsMinEnumSize]:='4';
+        CurrentValueSwitch[vsPackSet]:='0';
+      end;
       end;
     Handled:=false;
     FileResolver.Mode:=LangMode;
@@ -5127,6 +5294,32 @@ begin
   PPSkipModeStack[PPSkipStackIndex] := PPSkipMode;
   PPIsSkippingStack[PPSkipStackIndex] := PPIsSkipping;
   Inc(PPSkipStackIndex);
+end;
+
+procedure TPascalScanner.HandleDirectivePush;
+// {$push}/{$pushopt}: save the current directive (switch) state.
+var
+  N: Integer;
+begin
+  N := Length(FDirectiveStateStack);
+  SetLength(FDirectiveStateStack, N + 1);
+  FDirectiveStateStack[N].BoolSwitches := FCurrentBoolSwitches;
+  FDirectiveStateStack[N].ModeSwitches := FCurrentModeSwitches;
+  FDirectiveStateStack[N].ValueSwitches := FCurrentValueSwitches;
+end;
+
+procedure TPascalScanner.HandleDirectivePop;
+// {$pop}/{$popopt}: restore the last saved directive (switch) state.
+var
+  N: Integer;
+begin
+  N := Length(FDirectiveStateStack);
+  if N = 0 then Exit; // unbalanced {$pop}; ignore rather than crash
+  Dec(N);
+  CurrentBoolSwitches := FDirectiveStateStack[N].BoolSwitches;
+  CurrentModeSwitches := FDirectiveStateStack[N].ModeSwitches;
+  FCurrentValueSwitches := FDirectiveStateStack[N].ValueSwitches;
+  SetLength(FDirectiveStateStack, N);
 end;
 
 procedure TPascalScanner.HandleIFDEF(const AParam: TPasScannerString);
@@ -5283,7 +5476,7 @@ end;
 function TPascalScanner.HandleDirective(const ADirectiveText: TPasScannerString): TToken;
 
 Var
-  Directive,Param : TPasScannerString;
+  Directive,Param,Switches : TPasScannerString;
   P : Integer;
   IsFlowControl,Handled: Boolean;
 
@@ -5298,18 +5491,55 @@ Var
       Handled:=false;
   end;
 
+  // True if S is a comma-separated list of letter switches, such as Q-,R+
+  function IsLetterSwitchList(const S: TPasScannerString): Boolean;
+  var
+    i: Integer;
+  begin
+    Result:=(Length(S)>=5) and ((Length(S)+1) mod 3=0);
+    i:=1;
+    while Result and (i<=Length(S)) do
+      begin
+      Result:=(S[i] in ['a'..'z','A'..'Z']) and (S[i+1] in ['+','-'])
+        and ((i+2>Length(S)) or (S[i+2]=','));
+      Inc(i,3);
+      end;
+  end;
+
 begin
   Result:=tkComment;
-  P:=Pos(' ',ADirectiveText);
-  If P=0 then
-    begin
-    P:=Pos(#9,ADirectiveText);
-    If P=0 then
-      P:=Length(ADirectiveText)+1;
-    end;
+  Switches:='';
+  if Pos(',',ADirectiveText)>0 then
+    for P:=2 to Length(ADirectiveText) do
+      if not (ADirectiveText[P] in [' ',#9,#10,#13]) then
+        Switches:=Switches+ADirectiveText[P];
+  // The directive NAME ends at the first whitespace, and a LINE ENDING counts:
+  // an {$if} whose expression starts on the next line is legal, and taking only
+  // space/tab left the line ending glued to the name so nothing matched below
+  // (rtl-extra's sockets.pp, 45 corpus units).
+  P:=1;
+  while (P<=Length(ADirectiveText))
+      and not (ADirectiveText[P] in [' ',#9,#10,#13]) do
+    Inc(P);
   Directive:=Copy(ADirectiveText,2,P-2); // 1 is $
   Param:=ADirectiveText;
   Delete(Param,1,P);
+  // Drop any further leading whitespace so the parameter starts at the value:
+  // ReadIdentifier gives up on the first non-identifier character, so a name on
+  // the next line ({$ifdef<eol>  NAME}) or after two spaces read as empty.
+  while (Param<>'') and (Param[1] in [' ',#9,#10,#13]) do
+    Delete(Param,1,1);
+  // A switch may be written `{$macro+}` / `{$macro-}` with no space, which
+  // FPC treats exactly like `{$macro on}` / `{$macro off}`. 
+  if (Param='') and (Length(Directive)>2)
+      and (Directive[Length(Directive)] in ['+','-']) then
+    begin
+    if Directive[Length(Directive)]='+' then
+      Param:='on'
+    else
+      Param:='off';
+    Directive:=Copy(Directive,1,Length(Directive)-1);
+    end;
   {$IFDEF VerbosePasDirectiveEval}
   Writeln('TPascalScanner.HandleDirective.Directive: "',Directive,'", Param : "',Param,'"');
   {$ENDIF}
@@ -5340,7 +5570,17 @@ begin
     if PPIsSkipping then exit;
     IsFlowControl:=False;
     Handled:=false;
-    if (length(Directive)=2)
+    if IsLetterSwitchList(Switches) then
+      begin
+      Handled:=true;
+      P:=1;
+      while P<Length(Switches) do
+        begin
+        Result:=HandleLetterDirective(Switches[P],Switches[P+1]='+');
+        Inc(P,3);
+        end;
+      end
+    else if (length(Directive)=2)
         and (Directive[1] in ['a'..'z','A'..'Z'])
         and (Directive[2] in ['-','+']) then
       begin
@@ -5355,6 +5595,17 @@ begin
       Case UpperCase(Directive) of
       'ASSERTIONS':
         DoBoolDirective(bsAssertions);
+      'BITPACKING':
+        DoBoolDirective(bsBitPacking);
+      'COPERATORS':
+        // Enable/disable C-style assignment operators (+= -= *= /=). This is a
+        // parser Option, not a bool switch, so toggle FOptions directly.
+        if CompareText(Param,'on')=0 then
+          FOptions:=FOptions+[po_CAssignments]
+        else if CompareText(Param,'off')=0 then
+          FOptions:=FOptions-[po_CAssignments]
+        else
+          Error(nErrXExpectedButYFound,SErrXExpectedButYFound,['on',Param]);
       'DEFINE',
       'DEFINEC',
       'SETC':
@@ -5367,10 +5618,16 @@ begin
         HandleDispatchField(Param,vsDispatchStrField);
       'MINENUMSIZE', 'PACKENUM':
         HandlePackValue(vsMinEnumSize,Param);
+      'Z1', 'Z2', 'Z4':
+        HandlePackValue(vsMinEnumSize,Directive[2]);
       'PACKSET':
         HandlePackValue(vsPackSet,Param);
       'PACKRECORDS':
         HandlePackValue(vsPackRecords,Param);
+      'PUSH', 'PUSHOPT':
+        HandleDirectivePush;
+      'POP', 'POPOPT':
+        HandleDirectivePop;
       'ERROR':
         HandleError(Param);
       'HINT':
@@ -5427,6 +5684,8 @@ begin
         DoBoolDirective(bsTypedAddress);
       'TYPEINFO':
         DoBoolDirective(bsTypeInfo);
+      'VARPROPSETTER':
+        DoBoolDirective(bsVarPropSetter);
       'UNDEF':
         HandleUnDefine(Param);
       'WARN':
@@ -5495,9 +5754,9 @@ var
   NewValue: Boolean;
 
 begin
-  if CompareText(Param,'on')=0 then
+  if (CompareText(Param,'on')=0) or (Param='+') then
     NewValue:=true
-  else if CompareText(Param,'off')=0 then
+  else if (CompareText(Param,'off')=0) or (Param='-') then
     NewValue:=false
   else
     begin
@@ -5796,6 +6055,7 @@ function TPascalScanner.DoFetchToken: TToken;
 var
   TokenStart: {$ifdef UsePChar}PAnsiChar{$else}integer{$endif};
   i: TToken;
+  NamedTok: TToken;
   QuoteLen, SectionLength, Index: Integer;
   {$ifdef UsePChar}
   //
@@ -5924,7 +6184,11 @@ begin
     '#':
       Result:=DoFetchTextToken;
     '''':
-      if (msDelphiMultiLineStrings in CurrentModeSwitches) and IsDelphiMultiLine(Quotelen) then
+      // Triple-quote multiline strings: enabled by {$modeswitch DelphiMultiLineStrings}
+      // and also by {$modeswitch multilinestrings}.
+      if ((msDelphiMultiLineStrings in CurrentModeSwitches)
+          or (msMultiLineStrings in CurrentModeSwitches))
+          and IsDelphiMultiLine(Quotelen) then
         Result:=DoFetchDelphiMultiLineTextToken(Quotelen)
       else
         Result:=DoFetchTextToken;
@@ -6080,7 +6344,8 @@ begin
         SectionLength := FTokenPos - TokenStart;
         FetchCurTokenString;
         // Handle macro which is //
-        if FCurSourceFile is TMacroReader then
+        // Only when the macro text ends here: a macro whose value is "//"
+        if (FCurSourceFile is TMacroReader) and FCurSourceFile.IsEOF then
           begin
           // exhaust till eof of macro stream
           Repeat
@@ -6107,8 +6372,16 @@ begin
       repeat
         Inc(FTokenPos);
       until {$ifdef UsePChar}not (FTokenPos[0] in Digits){$else}(FTokenPos>l) or not (s[FTokenPos] in Digits){$endif};
-      if {$ifdef UsePChar}(FTokenPos[0]='.') and (FTokenPos[1]<>'.') and (FTokenPos[1]<>')'){$else}
-          (FTokenPos<=l) and (s[FTokenPos]='.') and ((FTokenPos=l) or ((s[FTokenPos+1]<>'.') and (s[FTokenPos+1]<>')'))){$endif}then
+      // A '.' starts a fraction only when followed by a digit, or by an
+      // exponent ('e'/'E' + digit/sign as in 1.E2). Otherwise the '.' is a
+      // member-access dot (e.g. 100000.GetSomething on an Integer helper) or a
+      // range '..'; leave it as a separate token.
+      if {$ifdef UsePChar}(FTokenPos[0]='.')
+            and ((FTokenPos[1] in Digits)
+              or ((FTokenPos[1] in ['e','E']) and (FTokenPos[2] in (Digits+['+','-'])))){$else}
+          (FTokenPos<l) and (s[FTokenPos]='.')
+            and ((s[FTokenPos+1] in Digits)
+              or ((s[FTokenPos+1] in ['e','E']) and (FTokenPos+1<l) and (s[FTokenPos+2] in (Digits+['+','-'])))){$endif}then
         begin
         inc(FTokenPos);
         while {$ifdef UsePChar}FTokenPos[0] in Digits{$else}(FTokenPos<=l) and (s[FTokenPos] in Digits){$endif} do
@@ -6254,14 +6527,12 @@ begin
       SectionLength := FTokenPos - TokenStart;
       FetchCurTokenString;
       Result:=tkIdentifier;
-      for i:=tkAbsolute to tkXor do
-        begin
-        if (CompareText(CurTokenString, TokenInfos[i])=0) then
-          begin
-          Result:=I;
-          break;
-          end;
-        end;
+      // Binary search over the sorted table instead of comparing against every
+      // keyword in turn: an identifier that is not a keyword used to walk the
+      // whole list, and CurTokenString is a function, so it was built again for
+      // each comparison - together 7% of scanning a large table unit.
+      if IsNamedToken(CurTokenString,NamedTok) then
+        Result:=NamedTok;
       if (Result<>tkIdentifier) and (Result in FNonTokens) then
         Result:=tkIdentifier;
       FCurToken := Result;
@@ -6868,8 +7139,12 @@ end;
 function TPascalScanner.IfOpt(Letter: AnsiChar): boolean;
 begin
   Letter:=upcase(Letter);
-  Result:=(Letter in ['A'..'Z']) and (LetterSwitchNames[Letter]<>'')
-    and IsDefined(LetterSwitchNames[Letter]);
+  if not (Letter in ['A'..'Z']) then
+    exit(false);
+  if LetterToBoolSwitch[Letter]<>bsNone then
+    Result:=LetterToBoolSwitch[Letter] in FCurrentBoolSwitches
+  else
+    Result:=(LetterSwitchNames[Letter]<>'') and IsDefined(LetterSwitchNames[Letter]);
 end;
 
 function TPascalScanner.AddMacro(const aName, aValue: TPasScannerString; Quiet: boolean

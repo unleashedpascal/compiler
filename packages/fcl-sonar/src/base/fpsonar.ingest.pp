@@ -14,12 +14,9 @@
  **********************************************************************}
 unit FpSonar.Ingest;
 
-{ Source ingestion: the vendored-fcl-passrc front-end.
-  The SOLE owner of the fcl-passrc scanner/parser dependency (PScanner/PParser).
-  Every other src/core unit reaches tokens/AST through here.
-}
 
 {$mode objfpc}{$H+}
+{$modeswitch advancedrecords}
 
 interface
 
@@ -44,80 +41,76 @@ type
     Row: integer;
     Col: integer;
     FileName: string;
+    // The classifier methods below are the sole token-kind interface outside
+    // this scanner adapter.
+    function IsComment: boolean;
+    // True iff a numeric-literal token.
+    function IsNumber: boolean;
+    // True iff a string or char literal token.
+    function IsString: boolean;
+    // True iff a reserved-word/keyword token. Context directives the scanner
+    // returns as identifiers (result, string, out, ...) are NOT keywords.
+    function IsKeyword: boolean;
+    // True iff the 'begin' reserved word (distinguishes a legacy begin..end unit
+    // body from an explicit initialization section, which are AST-identical).
+    function IsBegin: boolean;
+    // True iff trivia: whitespace, line ending, tab or comment.
+    function IsTrivia: boolean;
+    // The literal lexeme of a one-/two-/three-char operator or punctuation
+    // token ('(' ')' ',' ':' ';' ':=' ...), or '' for any other kind. Symbol
+    // tokens carry an empty Text.
+    function Punct: string;
   end;
 
   TFpSonarTokenArray = array of TFpSonarToken;
+
+  { The conditional symbols a scan ended with: the configured defines plus every
+    {$define} the file and its includes made, minus every {$undef}. The sole
+    define-set interface outside this scanner adapter. }
+  TFpSonarDefineSet = record
+  private
+    FSymbols: TFpSonarStringArray;
+    FCaptured: boolean;
+  public
+    // False when no define set was captured (a failed scan); True otherwise,
+    // with aDefined saying whether aSymbol is in it. Case-insensitive.
+    function TryIsDefined(const aSymbol: string; out aDefined: boolean): boolean;
+  end;
 
   { Trivia-on scanner adapter over the vendored TPascalScanner. }
   TFpSonarScanner = class
   private
     FTokens: TFpSonarTokenArray;
+    FDefines: TFpSonarDefineSet;
+    FDialect: TFpSonarDialect;
   public
+    // The source dialect; dlPas2js adds the pas2js parse-relevant modeswitches
+    // to the scan. Set before ScanFile; default dlDefault (byte-identical).
+    property Dialect: TFpSonarDialect read FDialect write FDialect;
     // Scans aFileName under aCompilerMode with the given defines (trivia on),
     // returning every token — including whitespace, line endings and comments —
     // each carrying its start line:col. The result is also kept in Tokens.
+    // aIncludePaths + the unit's own directory resolve {$I} includes.
     function ScanFile(const aFileName: string; const aCompilerMode: string;
-      const aDefines: array of string): TFpSonarTokenArray;
+      const aDefines: array of string;
+      const aIncludePaths: array of string): TFpSonarTokenArray;
     // Non-throwing scan entry for the per-unit fault boundary: wraps ScanFile,
     // converting any failure into aDiag (Kind dkScanError) instead of
     // propagating. Returns True on success (aDiag zeroed); False on failure
-    // (Tokens holds the best-effort partial stream, possibly empty). The scanner
-    // is the most fault-tolerant tier, so this rarely fires — but the boundary
-    // must not crash if it does.
+    // (Tokens holds the best-effort partial stream, possibly empty).
     function TryScanFile(const aFileName: string; const aCompilerMode: string;
-      const aDefines: array of string; out aDiag: TFpSonarDiagnostic): boolean;
+      const aDefines: array of string; const aIncludePaths: array of string;
+      out aDiag: TFpSonarDiagnostic): boolean;
     // The token sequence produced by the most recent ScanFile call.
     property Tokens: TFpSonarTokenArray read FTokens;
+    // The define set the most recent ScanFile call ended with; uncaptured when
+    // that scan failed before reaching end of file.
+    property Defines: TFpSonarDefineSet read FDefines;
   end;
-
-// True iff aToken is a comment token. The SOLE comment classifier outside this
-// adapter pair: downstream consumers (suppression, the NoSonar tracker) call
-// this so they never name PScanner/tkComment and the chokepoint guard stays green.
-function IsCommentToken(const aToken: TFpSonarToken): boolean;
-
-// True iff aToken is a numeric literal token. Sibling of IsCommentToken so the
-// LEX numeric rules can anchor on numbers without naming
-// PScanner/tkNumber and tripping the chokepoint guard.
-function IsNumberToken(const aToken: TFpSonarToken): boolean;
-
-// True iff aToken is a string or char literal token. Sibling of IsCommentToken
-// so the NoTabs rule can exclude tabs inside string/char literals
-// without naming PScanner/tkString and tripping the chokepoint guard.
-function IsStringToken(const aToken: TFpSonarToken): boolean;
-
-// True iff aToken is a reserved-word/keyword token (the vendored scanner's
-// contiguous reserved-word range tkabsolute..tkxor). Sibling of IsCommentToken
-// so the TOK rules classify keywords without naming
-// PScanner/tk* and tripping the chokepoint guard. Context directives the
-// scanner returns as identifiers (result, string, out, ...) are NOT keywords.
-function IsKeywordToken(const aToken: TFpSonarToken): boolean;
-
-// True iff aToken is the 'begin' reserved word. Sibling of IsKeywordToken so the
-// NoLegacyInitializationSection rule can tell a legacy 'begin..end.'
-// unit body from an explicit 'initialization' section (the two are
-// AST-indistinguishable) without naming PScanner/tkbegin and tripping the
-// chokepoint guard.
-function IsBeginToken(const aToken: TFpSonarToken): boolean;
-
-// True iff aToken is trivia: whitespace, line ending, tab or comment — the
-// non-significant tokens the trivia-on scanner emits. Sibling of IsCommentToken
-// so the TOK rules (1.11) can build a significant-token view without naming
-// PScanner/tk* and tripping the chokepoint guard.
-function IsTriviaToken(const aToken: TFpSonarToken): boolean;
-
-// The literal lexeme of a one-/two-/three-char operator or punctuation token
-// ('(' ')' ',' ':' ';' '[' ']' '=' '.' ':=' ... ), or '' for any other kind.
-// Symbol tokens carry an EMPTY Text from the scanner (only identifiers, numbers,
-// strings, chars and comments fill it), so the TOK rules (1.11) need this to
-// compare punctuation by lexeme without naming PScanner/tk* and tripping the
-// chokepoint guard.
-function TokenPunct(const aToken: TFpSonarToken): string;
 
 type
   { Container engine: owns every element the parser creates, so its destructor
-    frees the whole parsed tree. CreateElement MUST call AddOwnedElement —
-    omitting it leaks the tree. Pattern ported
-    from tests/core/utstsmokeparse.pas (TSmokeEngine). }
+    frees the whole parsed tree. CreateElement must call AddOwnedElement. }
   TFpSonarParseEngine = class(TPasTreeContainer)
   public
     function CreateElement(AClass: TPTreeElement; const AName: string;
@@ -135,58 +128,52 @@ type
   private
     FEngine: TFpSonarParseEngine;
     FModule: TPasModule;
+    FDialect: TFpSonarDialect;
   public
+    // The source dialect; dlPas2js adds the pas2js parse-relevant parser options
+    // + modeswitches. Set before ParseFile; default dlDefault (byte-identical).
+    property Dialect: TFpSonarDialect read FDialect write FDialect;
     destructor Destroy; override;
     // Parses the unit at aFileName under aCompilerMode with the given defines,
     // returning its pastree TPasModule (also available via Module). Raises
-    // EParserError/EScannerError on syntax errors (fault isolation is handled by
-    // the caller). The
-    // tree is owned by this object and freed when this parser is freed.
+    // EParserError/EScannerError on syntax errors. The tree is owned by this
+    // object and freed when this parser is freed.
     function ParseFile(const aFileName: string; const aCompilerMode: string;
-      const aDefines: array of string): TPasModule;
-    // Non-throwing parse entry for the per-unit fault boundary: wraps ParseFile,
-    // converting any failure into aDiag instead of propagating. Returns True on
-    // success (Module valid, aDiag zeroed); False on failure (Module nil, aDiag
-    // describes the failure). The sole reader of EParserError's typed fields, so
-    // the diagnostic crossing into core stays free of vendored types.
+      const aDefines: array of string;
+      const aIncludePaths: array of string): TPasModule;
+    // Non-throwing parse entry for the per-unit fault boundary: wraps
+    // ParseFile, converting any failure into aDiag instead of propagating.
+    // Returns True on success (Module valid, aDiag zeroed); False on failure
+    // (Module nil, aDiag describes the failure).
     function TryParseFile(const aFileName: string; const aCompilerMode: string;
-      const aDefines: array of string; out aDiag: TFpSonarDiagnostic): boolean;
+      const aDefines: array of string; const aIncludePaths: array of string;
+      out aDiag: TFpSonarDiagnostic): boolean;
     // The module parsed by the most recent ParseFile call (nil before that).
     property Module: TPasModule read FModule;
   end;
 
 type
-  { Story 6-6b — plain-typed conditional-directive query. The scanner's
-    OnEvalFunction handler (which must live here, the sole owner of the scanner
-    types) delegates declared()/sizeof() to the resolver engine through this
-    callback, so neither the scanner event type leaks into the resolver unit nor
-    the resolver types into this one — both chokepoints stay clean.
-    aFuncName is the lowercased cond-function ('declared'/'sizeof'); aArgument is
-    the bare identifier/type name; aGenArity is the generic-parameter count parsed
-    from the optional '<...>' (-1 when there is no '<'). On True, aValue holds the
-    decided result ('1'/'0' for declared, the byte size for sizeof); False fails
-    the unit (the scanner raises) — the evaluator never fabricates a branch. }
+  { Plain-typed conditional-directive query. aFuncName is the lowercased
+    cond-function ('declared'/'sizeof'); aArgument is the bare identifier/type
+    name; aGenArity is the generic-parameter count parsed from the optional
+    '<...>' (-1 when there is no '<'). On True, aValue holds the decided result
+    ('1'/'0' for declared, the byte size for sizeof); False fails the unit. }
   TFpSonarCondEvalQuery = function(const aFuncName, aArgument: string;
     aGenArity: integer; out aValue: string): boolean of object;
 
-  { Story 3-23 — keep-alive handle for a RESOLVED parse. The scanner/parser/
-    file-resolver of a resolved parse must OUTLIVE the parse call: freeing the
-    parser nils the engine's CurrentParser, which makes the vendored resolver
-    Clear its module/section scopes (the lkModule resolve-data) — exactly the
-    TPasSectionScope a cross-unit uses-clause needs on every dependency. The
-    resolver wrapper owns a list of these and frees them (parsers FIRST) at
-    teardown, after the whole build (and its queries) are done. }
+  { Keep-alive handle for a resolved parse: its scanner, parser and file
+    resolver must outlive the parse call. The resolver wrapper owns a list of
+    these and frees them (parsers first) at teardown. }
   TFpSonarResolvedParse = class
   private
     FFileResolver: TFileResolver;
     FScanner: TPascalScanner;
     FParser: TPasParser;
-    // Story 6-6b — the resolver-backed declared()/sizeof() evaluator (nil in the
-    // default synthetic-preferred mode, leaving OnEvalFunction unassigned).
+    // The resolver-backed declared()/sizeof() evaluator; nil in the default
+    // synthetic-preferred mode.
     FCondEvalQuery: TFpSonarCondEvalQuery;
-    // Story 6-6b — the scanner OnEvalFunction handler: parses the optional
-    // generic arity, answers only declared()/sizeof() (via FCondEvalQuery), and
-    // fails the unit for any other cond-function (returns False -> scanner raises).
+    // The scanner OnEvalFunction handler: answers only declared()/sizeof() and
+    // fails the unit for any other cond-function.
     function EvalCondFunction(Sender: TCondDirectiveEvaluator;
       Name, Param: string; out Value: string): boolean;
   public
@@ -195,92 +182,141 @@ type
     destructor Destroy; override;
   end;
 
-  // RESOLVED parse entry for the SEM tier's cross-unit resolver.
-  // Drives TPasParser with a CALLER-SUPPLIED TPasTreeContainer engine (a
-  // TPasResolver subclass) so resolution runs inline during the parse, fed the
-  // include search paths + defines. Unlike the single-unit path, the
-  // implicit "uses System" is KEPT so System aliases (Integer/TObject/…) bind via
-  // the wrapper's FindUnit; cross-unit unit lookup itself is the wrapper's job.
+  // Resolved parse entry for the SEM tier's cross-unit resolver. Drives
+  // TPasParser with a caller-supplied TPasTreeContainer engine so resolution
+  // runs inline during the parse, fed the include search paths and defines.
+  // The implicit "uses System" is kept so System aliases bind via the wrapper's
+  // FindUnit.
 
-  // The created scanner/parser/file-resolver are wrapped in a TFpSonarResolvedParse
-  // appended to aOwned BEFORE the parse, so the caller owns (and later frees) them
-  // even if the parse raises — and their scopes survive for the rest of the build.
-  // On a syntax error it catches EParserError, fills aDiag (dkParseError) and
-  // returns False. It deliberately does NOT catch other exceptions: a resolution
-  // failure (EPasResolve, raised inline during the parse) PROPAGATES to the
-  // resolver wrapper, which tags it dkResolveError — keeping the resolver-engine
-  // dependency out of this chokepoint unit.
+  // The created scanner/parser/file-resolver are wrapped in a
+  // TFpSonarResolvedParse appended to aOwned before the parse, so the caller
+  // owns them even if the parse raises. On a syntax error it catches
+  // EParserError, fills aDiag (dkParseError) and returns False; a resolution
+  // failure propagates to the resolver wrapper, which tags it dkResolveError.
 
-  // Story 6-4 — aImplicitUses lists extra unit names to APPEND to the parser's
-  // implicit-uses chain (after the always-present 'System'), e.g. 'objpas' under
-  // the real-RTL-preferred mode so RTL types (PString = ObjPas.PString) bind from
-  // the uses-chain rather than a -d define. Empty (the default) leaves the chain
-  // at the stock implicit 'System' — byte-identical to the committed behaviour.
+  // aImplicitUses lists extra unit names to append to the parser's implicit-uses
+  // chain, after the always-present 'System'. Empty leaves the chain at 'System'.
 
-// Story 6-6b — aCondEvalQuery is the real-RTL cond-directive evaluator. When
-// assigned (real-RTL mode only), the scanner's OnEvalFunction is wired to it so
-// {$if declared(X)}/{$if sizeof(T)=N} answer from the resolver's live scope, and
-// value-macro mode (= -Sm, which FPC uses to build the RTL) is enabled so the
-// RTL's macro {$if}s parse. Nil (the default) leaves OnEvalFunction unassigned
-// and macros off — byte-identical to the committed behaviour.
+// aCondEvalQuery is the real-RTL cond-directive evaluator. When assigned, the
+// scanner's OnEvalFunction is wired to it and value-macro mode (-Sm) is enabled.
+// Nil leaves OnEvalFunction unassigned and macros off.
 function ParseResolvedKeepAlive(aEngine: TPasTreeContainer;
   const aFileName, aCompilerMode: string;
   const aDefines, aIncludePaths, aImplicitUses: array of string;
-  aCondEvalQuery: TFpSonarCondEvalQuery;
+  aCondEvalQuery: TFpSonarCondEvalQuery; aDialect: TFpSonarDialect;
   aOwned: TFPList; out aModule: TPasModule;
   out aDiag: TFpSonarDiagnostic): boolean;
 
 implementation
 
-function IsCommentToken(const aToken: TFpSonarToken): boolean;
+const
+  // pas2js parse-relevant PARSER options: the syntax-enabling subset of
+  // fppas2js.po_Pas2js, WITHOUT the four resolver-semantic members
+  // (po_Resolver, po_ResolveStandardTypes, po_StopOnUnitInterface,
+  // po_CheckDirectiveRTTI) — a parse dialect must not switch on full resolution.
+  Pas2jsParserOptions: TPOptions =
+    [po_AsyncProcs, po_ExtConstWithoutExpr, po_AsmWhole];
+  // Mirror of fppas2js.msAllPas2jsModeSwitches MINUS the mode selectors
+  // (msDelphi/msObjfpc — the configured compiler mode owns those). Inlined
+  // literally rather than importing pastojs, which fcl-sonar does not depend on.
+  Pas2jsModeSwitches: TModeSwitches = [
+    msClass, msResult, msRepeatForward, msInitFinal, msOut, msDefaultPara,
+    msProperty, msExcept, msDefaultUnicodestring, msCBlocks,
+    msFunctionReferences, msAnonymousFunctions, msNestedComment, msAutoDeref,
+    msHintDirective, msAdvancedRecords, msExternalClass, msTypeHelpers,
+    msArrayOperators, msPrefixedAttributes, msOmitRTTI, msMultiHelpers,
+    msImplicitFunctionSpec, msMultiLineStrings, msDelphiMultiLineStrings];
+
+// Adds the pas2js parse-relevant modeswitches to aScanner for dlPas2js; a no-op
+// for dlDefault. Uses ReadOnlyModeSwitches so the switches survive an in-source
+// {$mode} directive. Call after SetCompilerMode.
+procedure ApplyDialectModeSwitches(aScanner: TPascalScanner;
+  aDialect: TFpSonarDialect);
 begin
-  Result := aToken.Kind = tkComment;
+  if aDialect = dlPas2js then
+    aScanner.ReadOnlyModeSwitches := aScanner.ReadOnlyModeSwitches +
+      Pas2jsModeSwitches;
 end;
 
 
-function IsNumberToken(const aToken: TFpSonarToken): boolean;
+// Adds the pas2js parse-relevant parser options to aParser for dlPas2js; a no-op
+// for dlDefault (byte-identical).
+procedure ApplyDialectParserOptions(aParser: TPasParser;
+  aDialect: TFpSonarDialect);
 begin
-  Result := aToken.Kind = tkNumber;
+  if aDialect = dlPas2js then
+    aParser.Options := aParser.Options + Pas2jsParserOptions;
 end;
 
 
-function IsStringToken(const aToken: TFpSonarToken): boolean;
+function TFpSonarToken.IsComment: boolean;
 begin
-  Result := aToken.Kind in [tkString, tkStringMultiLine, tkChar];
+  Result := Kind = tkComment;
 end;
 
 
-function IsKeywordToken(const aToken: TFpSonarToken): boolean;
+function TFpSonarToken.IsNumber: boolean;
 begin
-  Result := aToken.Kind in [tkabsolute..tkxor];
+  Result := Kind = tkNumber;
 end;
 
 
-function IsBeginToken(const aToken: TFpSonarToken): boolean;
+function TFpSonarToken.IsString: boolean;
 begin
-  Result := aToken.Kind = tkbegin;
+  Result := Kind in [tkString, tkStringMultiLine, tkChar];
 end;
 
 
-function IsTriviaToken(const aToken: TFpSonarToken): boolean;
+function TFpSonarToken.IsKeyword: boolean;
 begin
-  Result := aToken.Kind in [tkWhitespace, tkComment, tkLineEnding, tkTab];
+  Result := Kind in ([tkabsolute..tkxor] - [tkTrue,tkFalse]);
 end;
 
 
-function TokenPunct(const aToken: TFpSonarToken): string;
+function TFpSonarToken.IsBegin: boolean;
+begin
+  Result := Kind = tkbegin;
+end;
+
+
+function TFpSonarToken.IsTrivia: boolean;
+begin
+  Result := Kind in [tkWhitespace, tkComment, tkLineEnding, tkTab];
+end;
+
+
+function TFpSonarToken.Punct: string;
 begin
   // The contiguous one-/two-/three-char symbol block of TToken, before the
   // reserved words; TokenInfos maps each to its source lexeme.
-  if aToken.Kind in [tkBraceOpen..tkDotDotDot] then
-    Result := TokenInfos[aToken.Kind]
+  if Kind in [tkBraceOpen..tkDotDotDot] then
+    Result := TokenInfos[Kind]
   else
     Result := '';
 end;
 
 
+function TFpSonarDefineSet.TryIsDefined(const aSymbol: string;
+  out aDefined: boolean): boolean;
+var
+  i: integer;
+begin
+  aDefined := False;
+  Result := FCaptured;
+  if not Result then
+    Exit;
+  for i := 0 to High(FSymbols) do
+    if SameText(FSymbols[i], aSymbol) then
+    begin
+      aDefined := True;
+      Exit;
+    end;
+end;
+
+
 function TFpSonarScanner.ScanFile(const aFileName: string;
-  const aCompilerMode: string; const aDefines: array of string): TFpSonarTokenArray;
+  const aCompilerMode: string; const aDefines: array of string;
+  const aIncludePaths: array of string): TFpSonarTokenArray;
 var
   lResolver: TFileResolver;
   lScanner: TPascalScanner;
@@ -289,6 +325,8 @@ var
   i: integer;
 begin
   SetLength(FTokens, 0);
+  SetLength(FDefines.FSymbols, 0);
+  FDefines.FCaptured := False;
   lCount := 0;
   // Nil first so the finally clause frees only what was actually constructed,
   // even if a constructor below raises (Free is a no-op on nil).
@@ -296,11 +334,21 @@ begin
   lScanner := nil;
   try
     lResolver := TFileResolver.Create;
+    // {$I} resolves relative to the unit's own directory first, then the
+    // configured include paths — without this an in-tree include aborts the scan.
+    lResolver.BaseDirectory := ExtractFilePath(aFileName);
+    for i := Low(aIncludePaths) to High(aIncludePaths) do
+      if aIncludePaths[i] <> '' then
+        lResolver.AddIncludePath(aIncludePaths[i]);
     lScanner := TPascalScanner.Create(lResolver);
     // TRIVIA ON: surface whitespace, line endings and comments as real tokens.
     lScanner.SkipWhiteSpace := False;
     lScanner.SkipComments := False;
+    // Resources hold nothing a linter inspects; skipping {$R} handling keeps a
+    // missing/unsupported resource from aborting the whole unit's scan.
+    lScanner.Options := lScanner.Options + [po_DisableResources];
     lScanner.SetCompilerMode(aCompilerMode);
+    ApplyDialectModeSwitches(lScanner, FDialect);
     for i := Low(aDefines) to High(aDefines) do
       if aDefines[i] <> '' then
         lScanner.AddDefine(aDefines[i]);
@@ -317,8 +365,29 @@ begin
       FTokens[lCount].Col := lScanner.CurTokenPos.Column;
       FTokens[lCount].FileName := lScanner.CurTokenPos.FileName;
       Inc(lCount);
+      { pas2js asm blocks contain literal JavaScript: read the block as
+        non-Pascal text until 'end', like the parser's po_AsmWhole option. }
+      if (FDialect = dlPas2js) and (lToken = tkasm) then
+        repeat
+          lToken := lScanner.ReadNonPascalTillEndToken(True);
+          if Length(FTokens) <= lCount then
+            SetLength(FTokens, (lCount + 1) * 2);
+          FTokens[lCount].Kind := lToken;
+          FTokens[lCount].Text := lScanner.CurTokenString;
+          FTokens[lCount].Row := lScanner.CurTokenPos.Row;
+          FTokens[lCount].Col := lScanner.CurTokenPos.Column;
+          FTokens[lCount].FileName := lScanner.CurTokenPos.FileName;
+          Inc(lCount);
+        until (lToken = tkEOF) or (lToken = tkEnd);
     until lToken = tkEOF;
     SetLength(FTokens, lCount);
+    // The union IsDefined itself answers from: plain defines and macro names.
+    SetLength(FDefines.FSymbols, lScanner.Defines.Count + lScanner.Macros.Count);
+    for i := 0 to lScanner.Defines.Count - 1 do
+      FDefines.FSymbols[i] := lScanner.Defines[i];
+    for i := 0 to lScanner.Macros.Count - 1 do
+      FDefines.FSymbols[lScanner.Defines.Count + i] := lScanner.Macros[i];
+    FDefines.FCaptured := True;
   finally
     lScanner.Free;
     lResolver.Free;
@@ -329,6 +398,7 @@ end;
 
 function TFpSonarScanner.TryScanFile(const aFileName: string;
   const aCompilerMode: string; const aDefines: array of string;
+  const aIncludePaths: array of string;
   out aDiag: TFpSonarDiagnostic): boolean;
 begin
   // Success contract: zeroed diagnostic. Reset up front for the happy path.
@@ -339,8 +409,19 @@ begin
   aDiag.Message := '';
   Result := True;
   try
-    ScanFile(aFileName, aCompilerMode, aDefines);
+    ScanFile(aFileName, aCompilerMode, aDefines, aIncludePaths);
   except
+    // A missing/unopenable file is the resolver's own EFileNotFoundError: relay
+    // it as a dedicated dkFileNotFound.
+    on E: EFileNotFoundError do
+    begin
+      aDiag.FileName := aFileName;
+      aDiag.Row := 0;
+      aDiag.Col := 0;
+      aDiag.Kind := dkFileNotFound;
+      aDiag.Message := aFileName;
+      Result := False;
+    end;
     // Scanner errors carry no typed position — anchor to the file at 0:0 and
     // keep whatever partial token stream ScanFile collected before failing.
     on E: Exception do
@@ -363,8 +444,8 @@ begin
   Result.Visibility := AVisibility;
   Result.SourceFilename := ASourceFilename;
   Result.SourceLinenumber := ASourceLinenumber;
-  // Register with the container so Destroy frees it. The parser never
-  // calls AddOwnedElement itself; without this the parsed tree leaks.
+  // Register with the container so Destroy frees it. The parser never calls
+  // AddOwnedElement itself.
   AddOwnedElement(Result);
 end;
 
@@ -384,7 +465,8 @@ end;
 
 
 function TFpSonarParser.ParseFile(const aFileName: string;
-  const aCompilerMode: string; const aDefines: array of string): TPasModule;
+  const aCompilerMode: string; const aDefines: array of string;
+  const aIncludePaths: array of string): TPasModule;
 var
   lResolver: TFileResolver;
   lScanner: TPascalScanner;
@@ -403,14 +485,24 @@ begin
   lParser := nil;
   try
     lResolver := TFileResolver.Create;
+    // {$I} resolves relative to the unit's own directory first, then the
+    // configured include paths — without this an in-tree include aborts the parse.
+    lResolver.BaseDirectory := ExtractFilePath(aFileName);
+    for i := Low(aIncludePaths) to High(aIncludePaths) do
+      if aIncludePaths[i] <> '' then
+        lResolver.AddIncludePath(aIncludePaths[i]);
     lScanner := TPascalScanner.Create(lResolver);
     lParser := TPasParser.Create(lScanner, lResolver, FEngine);
+    // Set the parser Options before SetCompilerMode: assigning
+    // TPasParser.Options resets the scanner's CurrentModeSwitches on a
+    // po_delphi transition. po_DisableResources skips {$R} handling.
+    lParser.Options := lParser.Options + [po_ArrayRangeExpr, po_DisableResources];
+    ApplyDialectParserOptions(lParser, FDialect);
     lScanner.SetCompilerMode(aCompilerMode);
+    ApplyDialectModeSwitches(lScanner, FDialect);
     for i := Low(aDefines) to High(aDefines) do
       if aDefines[i] <> '' then
         lScanner.AddDefine(aDefines[i]);
-    // Enable the global parser prerequisite before opening/parsing.
-    lParser.Options := lParser.Options + [po_ArrayRangeExpr];
     lScanner.OpenFile(aFileName);
     // Raises EParserError on any syntax error -> propagates to the caller.
     lParser.ParseMain(FModule);
@@ -427,6 +519,7 @@ end;
 
 function TFpSonarParser.TryParseFile(const aFileName: string;
   const aCompilerMode: string; const aDefines: array of string;
+  const aIncludePaths: array of string;
   out aDiag: TFpSonarDiagnostic): boolean;
 begin
   // Success contract: zeroed diagnostic, valid Module. Reset up front so the
@@ -438,8 +531,20 @@ begin
   aDiag.Message := '';
   Result := True;
   try
-    ParseFile(aFileName, aCompilerMode, aDefines);
+    ParseFile(aFileName, aCompilerMode, aDefines, aIncludePaths);
   except
+    // A missing/unopenable file (resolver's EFileNotFoundError) — surface it as
+    // dkFileNotFound, matching TryScanFile, rather than a bare "Parse error".
+    // Checked before EParserError: this is not a syntax failure.
+    on E: EFileNotFoundError do
+    begin
+      aDiag.FileName := aFileName;
+      aDiag.Row := 0;
+      aDiag.Col := 0;
+      aDiag.Kind := dkFileNotFound;
+      aDiag.Message := aFileName;
+      Result := False;
+    end;
     // The typed parser failure (scanner errors are re-raised as this one via
     // po_KeepScannerError) — read its position straight from the exception.
     on E: EParserError do
@@ -520,7 +625,7 @@ end;
 function ParseResolvedKeepAlive(aEngine: TPasTreeContainer;
   const aFileName, aCompilerMode: string;
   const aDefines, aIncludePaths, aImplicitUses: array of string;
-  aCondEvalQuery: TFpSonarCondEvalQuery;
+  aCondEvalQuery: TFpSonarCondEvalQuery; aDialect: TFpSonarDialect;
   aOwned: TFPList; out aModule: TPasModule;
   out aDiag: TFpSonarDiagnostic): boolean;
 var
@@ -552,23 +657,25 @@ begin
     // creating the parser with it sets the engine's CurrentParser.
     lParse.FParser := TPasParser.Create(lParse.FScanner, lParse.FFileResolver,
       aEngine);
-    // Implicit "uses System" is KEPT: the wrapper's FindUnit binds
-    // System (synthetic) so System aliases resolve on real units. Any extra
-    // implicit-uses (e.g. 'objpas') are appended AFTER System, so the
-    // real-RTL uses-chain matches FPC's (objpas follows System).
+    // Implicit "uses System" is KEPT: the wrapper's FindUnit binds System
+    // (synthetic) so System aliases resolve on real units. Any extra
+    // implicit-uses (e.g. 'objpas') are appended AFTER System.
     for i := Low(aImplicitUses) to High(aImplicitUses) do
       if aImplicitUses[i] <> '' then
         lParse.FParser.ImplicitUses.Add(aImplicitUses[i]);
+    // Set the parser Options BEFORE SetCompilerMode: assigning
+    // TPasParser.Options pushes them into the scanner, whose setter resets
+    // CurrentModeSwitches on a po_delphi transition.
+    lParse.FParser.Options := lParse.FParser.Options +
+      [po_ArrayRangeExpr, po_DisableResources];
+    ApplyDialectParserOptions(lParse.FParser, aDialect);
     lParse.FScanner.SetCompilerMode(aCompilerMode);
+    ApplyDialectModeSwitches(lParse.FScanner, aDialect);
     for i := Low(aDefines) to High(aDefines) do
       if aDefines[i] <> '' then
         lParse.FScanner.AddDefine(aDefines[i]);
-    lParse.FParser.Options := lParse.FParser.Options + [po_ArrayRangeExpr];
-    // Story 6-6b — real-RTL cond-directive evaluator (opt-in). When the caller
-    // supplies a query, wire the scanner's declared()/sizeof() hook to it and
-    // enable value-macro mode (bsMacro = -Sm). SetCompilerMode above only ADDS/
-    // REMOVES per-mode switches, so bsMacro set here survives any in-source
-    // {$mode} directive. Nil (the default) leaves both untouched — byte-identical.
+    // Real-RTL cond-directive evaluator (opt-in): wire the scanner's
+    // declared()/sizeof() hook and enable value-macro mode (bsMacro = -Sm).
     lParse.FCondEvalQuery := aCondEvalQuery;
     if Assigned(aCondEvalQuery) then
     begin

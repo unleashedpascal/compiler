@@ -38,6 +38,7 @@ type
     FParser: TFpSonarParser;
     FResolver: TFpSonarResolver;
     FTokens: TFpSonarTokenArray;
+    FDefines: TFpSonarDefineSet;
     FLines: TFpSonarStringArray;
     FDiagnostics: TFpSonarDiagnosticArray;
     FParseSucceeded: boolean;
@@ -55,12 +56,16 @@ type
     // As above, additionally scanning the resolver's unit/include search paths
     procedure Analyze(const aFileName, aCompilerMode: string;
       const aDefines, aUnitPaths, aIncludePaths: array of string); overload;
-    // As above, additionally opting into the separate real-source preference.
+    // As above, additionally opting into the separate real-source preference
+    // and selecting the source dialect (dlPas2js enables pas2js parsing).
     procedure Analyze(const aFileName, aCompilerMode: string;
       const aDefines, aUnitPaths, aIncludePaths: array of string;
-      aRealRtl: boolean; aTargetPointerSize: integer); overload;
+      aRealRtl: boolean; aTargetPointerSize: integer;
+      aDialect: TFpSonarDialect = dlDefault); overload;
     // The token stream from the last Analyze (survives a failed parse).
     property Tokens: TFpSonarTokenArray read FTokens;
+    // The define set the last Analyze's scan ended with.
+    property Defines: TFpSonarDefineSet read FDefines;
     // The raw physical lines from the last Analyze
     property Lines: TFpSonarStringArray read FLines;
     // The parsed AST from the last Analyze, or nil if the parse failed.
@@ -200,9 +205,11 @@ end;
 
 procedure TFpSonarSourceFile.Analyze(const aFileName, aCompilerMode: string;
   const aDefines, aUnitPaths, aIncludePaths: array of string;
-  aRealRtl: boolean; aTargetPointerSize: integer);
+  aRealRtl: boolean; aTargetPointerSize: integer;
+  aDialect: TFpSonarDialect = dlDefault);
 var
   lDiag: TFpSonarDiagnostic;
+  lFileMissing: boolean;
 begin
   // Fresh per-call state
   SetLength(FDiagnostics, 0);
@@ -210,36 +217,54 @@ begin
   FParseSucceeded := False;
   // Drop any resolver from a prior call before rebuilding (reused instance).
   FreeAndNil(FResolver);
+  // Dialect drives the pas2js parse-relevant switches on both the LEX token
+  // scan and the AST parse (dlDefault is byte-identical).
+  FScanner.Dialect := aDialect;
+  FParser.Dialect := aDialect;
 
   // Scan first: the token stream must survive a later parse failure.
-  if not FScanner.TryScanFile(aFileName, aCompilerMode, aDefines, lDiag) then
+  lFileMissing := False;
+  if not FScanner.TryScanFile(aFileName, aCompilerMode, aDefines, aIncludePaths,
+    lDiag) then
+  begin
     AddDiagnostic(lDiag);
+    lFileMissing := lDiag.Kind = dkFileNotFound;
+  end;
   FTokens := FScanner.Tokens;
+  FDefines := FScanner.Defines;
 
   // Raw physical lines for the LEX line-text feed.
   ReadLines(aFileName);
 
-  // Parse: on failure Module is left nil and a diagnostic recorded
-  FParseSucceeded := FParser.TryParseFile(aFileName, aCompilerMode, aDefines,
-    lDiag);
-  if not FParseSucceeded then
-    AddDiagnostic(lDiag);
-
-  // build the tolerant SEM resolver ONLY after a successful bare parse
-  if FParseSucceeded then
+  // A file that could not be opened has nothing to parse; the scan already
+  // reported it once (dkFileNotFound).
+  if not lFileMissing then
   begin
-    FResolver := TFpSonarResolver.Create;
-    FResolver.DependencyInterfaceOnly := True;
-    FResolver.IntrinsicConstEval := True;
-    FResolver.CondDirectiveEval := True;
-    FResolver.PpuAutoDetect := FPpuAutoDetect;
-    FResolver.PpuCacheDir := FPpuCacheDir;
-    if aTargetPointerSize > 0 then
-      FResolver.IntrinsicTargetPointerSize := aTargetPointerSize;
-    if aRealRtl then
-      FResolver.RealRtlPreferred := True;
-    FResolver.BuildFor(aFileName, aCompilerMode, aDefines, aUnitPaths,
+    // Parse: on failure Module is left nil and a diagnostic recorded
+    FParseSucceeded := FParser.TryParseFile(aFileName, aCompilerMode, aDefines,
       aIncludePaths, lDiag);
+    if not FParseSucceeded then
+      AddDiagnostic(lDiag);
+
+    // build the tolerant SEM resolver ONLY after a successful bare parse
+    if FParseSucceeded then
+    begin
+      FResolver := TFpSonarResolver.Create;
+      FResolver.DependencyInterfaceOnly := True;
+      FResolver.IntrinsicConstEval := True;
+      FResolver.CondDirectiveEval := True;
+      // pas2js has no .ppu, so ppudump auto-detect cannot apply — force it off
+      // and rely on real pas2js source (on aUnitPaths) + the synthetic floor.
+      FResolver.PpuAutoDetect := FPpuAutoDetect and (aDialect <> dlPas2js);
+      FResolver.PpuCacheDir := FPpuCacheDir;
+      FResolver.Dialect := aDialect;
+      if aTargetPointerSize > 0 then
+        FResolver.IntrinsicTargetPointerSize := aTargetPointerSize;
+      if aRealRtl then
+        FResolver.RealRtlPreferred := True;
+      FResolver.BuildFor(aFileName, aCompilerMode, aDefines, aUnitPaths,
+        aIncludePaths, lDiag);
+    end;
   end;
 end;
 

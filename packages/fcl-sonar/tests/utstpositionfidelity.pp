@@ -14,7 +14,6 @@
  **********************************************************************}
 unit utstPositionFidelity;
 
-{ Position-fidelity test. }
 
 {$mode objfpc}{$H+}
 
@@ -41,8 +40,7 @@ type
 implementation
 
 const
-  // Embedded position-fidelity fixtures (Approach A): line i+1 == [i].
-  // Row/col of tokens are asserted exactly — do NOT reformat these.
+  // Embedded position-fidelity fixtures: line i+1 == [i]. Do not reformat.
 
   cPosMain: array[0..22] of string = (
     'unit PosMain;',
@@ -84,14 +82,13 @@ var
 begin
   lFix := TTempFixtures.Create;
   try
-    // posinc.inc must be co-located so the relative {$include} resolves via the
-    // scanner's BaseDirectory (set from the opened file's path).
+    // posinc.inc must be co-located for the relative {$include} to resolve.
     lFix.Add('posinc.inc', cPosInc);
     lPath := lFix.Add('posmain.pas', cPosMain);
     lScanner := TFpSonarScanner.Create;
     try
       Result := lScanner.ScanFile(lPath, 'OBJFPC',
-        ['FPC', 'CPUX86_64', 'UNIX', 'LINUX']);
+        ['FPC', 'CPUX86_64', 'UNIX', 'LINUX'], []);
     finally
       lScanner.Free;
     end;
@@ -132,8 +129,7 @@ var
 begin
   lTokens := ScanMain;
 
-  // cFromInclude is declared inside posinc.inc — its token must carry the
-  // include's FileName and its row WITHIN the include, not the main file.
+  // cFromInclude is declared inside posinc.inc.
   lIdx := IndexOfIdent(lTokens, 'cFromInclude');
   AssertTrue('cFromInclude token must be present (include resolved)', lIdx >= 0);
   AssertTrue('cFromInclude FileName ends in posinc.inc',
@@ -162,8 +158,7 @@ begin
   AssertEquals('excluded-branch token must not be emitted', -1,
     IndexOfIdent(lTokens, 'cExcluded'));
 
-  // cAfter follows the excluded block — its row must be its true row in the
-  // main file (the excluded lines do not shift it).
+  // cAfter follows the excluded block.
   lIdx := IndexOfIdent(lTokens, 'cAfter');
   AssertTrue('cAfter token must be present', lIdx >= 0);
   AssertTrue('cAfter FileName ends in posmain.pas',

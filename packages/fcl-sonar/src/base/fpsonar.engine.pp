@@ -30,6 +30,10 @@ uses
   FpSonar.FpcSource;
 
 type
+  { Cooperative per-file progress/abort hook }
+  TFpSonarProgressEvent = procedure(const aFile: string; aIndex, aTotal: integer;
+    out aContinue: boolean) of object;
+
   { The config-driven, multi-file orchestrator above TFpSonarRuleEngine. }
   TFpSonarEngine = class
   private
@@ -37,6 +41,7 @@ type
     FRealRtlPreferred: boolean;
     FPpuAutoDetect: boolean;
     FPpuCacheDir: string;
+    FOnProgress: TFpSonarProgressEvent;
     function GetConfig: TFpSonarConfig;
     procedure SetConfig(const aConfig: TFpSonarConfig);
     function GetSuppressionMap: TFpSonarSuppressionMap;
@@ -63,6 +68,8 @@ type
     property PpuAutoDetect: boolean read FPpuAutoDetect write FPpuAutoDetect;
     // Persistent ppudump-stub cache directory (--ppu-cache)
     property PpuCacheDir: string read FPpuCacheDir write FPpuCacheDir;
+    // Optional cooperative progress/abort hook, checked between files 
+    property OnProgress: TFpSonarProgressEvent read FOnProgress write FOnProgress;
   end;
 
 { Parses every file in aFiles once and folds it into a fresh project-wide name-reference index
@@ -75,7 +82,8 @@ function BuildProjectIndex(const aFiles: array of string; const aMode: string;
   each per-file parse so the project index folds the same names a real-RTL run resolves. }
 function BuildProjectIndex(const aFiles: array of string; const aMode: string;
   const aDefines, aUnitPaths, aIncludePaths: array of string;
-  aRealRtl: boolean; aTargetPointerSize: integer)
+  aRealRtl: boolean; aTargetPointerSize: integer;
+  aDialect: TFpSonarDialect = dlDefault)
   : TFpSonarProjectIndex; overload;
 
 
@@ -146,7 +154,8 @@ end;
 
 function BuildProjectIndex(const aFiles: array of string; const aMode: string;
   const aDefines, aUnitPaths, aIncludePaths: array of string;
-  aRealRtl: boolean; aTargetPointerSize: integer)
+  aRealRtl: boolean; aTargetPointerSize: integer;
+  aDialect: TFpSonarDialect = dlDefault)
 : TFpSonarProjectIndex;
 var
   lSourceFile: TFpSonarSourceFile;
@@ -159,7 +168,7 @@ begin
     lSourceFile := TFpSonarSourceFile.Create;
     try
       lSourceFile.Analyze(aFiles[i], aMode, aDefines, aUnitPaths,
-        aIncludePaths, aRealRtl, aTargetPointerSize);
+        aIncludePaths, aRealRtl, aTargetPointerSize, aDialect);
       if lSourceFile.Module <> nil then
         Result.AddModule(lSourceFile.Module)
       else
@@ -228,6 +237,7 @@ var
   lRtl, lMerged: TFpSonarAnalysisConfig;
   lDiag: TFpSonarDiagnostic;
   lPointerSize: integer;
+  lContinue: boolean;
   i: integer;
 begin
   // Copy then sort: never mutate the caller's config; analyze deterministically.
@@ -239,19 +249,16 @@ begin
 
   if FRealRtlPreferred then
   begin
-      { Consume the FPC-source discovery:
-        merge its real-RTL-Fu/-Fi/defines into the run's effective config so they ride the existing
-        resolver path args.
-        Honour any CLI --cpu/--os override; an empty value keeps the host default.
-        Defines are produced even when the source tree is not located
-        => a missing tree simply degrades to the synthetic fallback per RTL chain name, inside the resolver.
-        }
-    lFpcCfg := DefaultFpcSourceConfig;
+      { Consume the FPC-source discovery: merge its real-RTL -Fu/-Fi/defines
+        into the run's effective config. A CLI --cpu/--os override wins; an
+        empty value keeps the host default. Defines are produced even when the
+        source tree is not located. }
+    lFpcCfg := TFpSonarFpcSourceConfig.Default;
     if aConfig.TargetCPU <> '' then
       lFpcCfg.TargetCPU := aConfig.TargetCPU;
     if aConfig.TargetOS <> '' then
       lFpcCfg.TargetOS := aConfig.TargetOS;
-    BuildRtlSourceConfig(lFpcCfg, lRtl, lDiag);
+    lFpcCfg.BuildRtlSourceConfig(lRtl, lDiag);
     // Merge the paths + defines only
     lRtl.Mode := '';
     lRtl.TargetCPU := '';
@@ -274,20 +281,30 @@ begin
       Length(aConfig.IncludePaths));
   end;
 
-  { Build the project-wide name-reference index in a parse-pass over
-    the whole target set before per-file dispatch, so a project-scope USE rule
-    sees every unit's references when it runs on any one file.
-    Owned + freed here }
+  { Build the project-wide name-reference index in a parse-pass over the whole
+    target set before per-file dispatch. Owned and freed here. }
   lProjectIndex := BuildProjectIndex(lFiles, lMode, lDefines,
-    lUnitPaths, lIncludePaths, FRealRtlPreferred, lPointerSize);
+    lUnitPaths, lIncludePaths, FRealRtlPreferred, lPointerSize,
+    aConfig.Dialect);
   FRuleEngine.ProjectIndex := lProjectIndex;
   // Forward auto-detect ppudump resolution to the dispatcher (per-run).
   FRuleEngine.PpuAutoDetect := FPpuAutoDetect;
   FRuleEngine.PpuCacheDir := FPpuCacheDir;
   try
     for i := 0 to High(lFiles) do
+    begin
+      // Cooperative seam: report progress + honour a caller cancel between files. 
+      if Assigned(FOnProgress) then
+      begin
+        lContinue := True;
+        FOnProgress(lFiles[i], i + 1, Length(lFiles), lContinue);
+        if not lContinue then
+          Break;
+      end;
       FRuleEngine.Analyze(lFiles[i], lMode, lDefines,
-        lUnitPaths, lIncludePaths, FRealRtlPreferred, lPointerSize, aCollector);
+        lUnitPaths, lIncludePaths, FRealRtlPreferred, lPointerSize, aCollector,
+        aConfig.Dialect);
+    end;
   finally
     FRuleEngine.ProjectIndex := nil;
     lProjectIndex.Free;

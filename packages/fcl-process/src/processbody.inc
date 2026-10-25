@@ -525,7 +525,7 @@ Procedure TProcess.SetWindowHeight (Value : Cardinal);
 
 begin
   if Value<>0 then
-    include(FStartupOptions,suoUsePosition);
+    include(FStartupOptions,suoUseSize);
   dwYSize:=Value;
 end;
 
@@ -533,7 +533,7 @@ Procedure TProcess.SetWindowLeft (Value : Cardinal);
 
 begin
   if Value<>0 then
-    Include(FStartupOptions,suoUseSize);
+    Include(FStartupOptions,suoUsePosition);
   dwx:=Value;
 end;
 
@@ -1042,7 +1042,7 @@ var
 begin
   HIn:=THandle(INVALID_HANDLE_VALUE);
   HOut:=HIn;
-  If not CreatePipeHandles(Hin,HOut) then
+  If not CreatePipeHandles(Hin,HOut,FPipeBufferSize) then
     Raise EProcess.Create(SErrCannotCreatePipes);
   case ProcessHandleType of
     phtInput:

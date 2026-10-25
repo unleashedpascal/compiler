@@ -102,6 +102,7 @@ type
     procedure TestClassVarVarField;
     Procedure TestTwoFieldsVisibility;
     Procedure TestConstProtectedEnd;
+    Procedure TestConstProtectedEndEmpty;
     Procedure TestTypeProtectedEnd;
     Procedure TestVarProtectedEnd;
     procedure TestHintFieldDeprecated;
@@ -548,8 +549,6 @@ procedure TTestClassType.TestDirectiveRTTI(Param: string; ExpectedExplicit: bool
   );
 
   procedure Check(const El: string; const Expected, Actual: TPasMembersType.TRTTIVisibilitySections);
-  var
-    s: String;
   begin
     if Expected=Actual then exit;
     Fail(El+' visibility expected '+dbgs(Expected)+', but found '+dbgs(Actual));
@@ -990,6 +989,19 @@ begin
    AddMember('fmy : Integer');
    FDecl.Add('protected const');
    FDecl.Add('cconst = 10;');
+   StartVisibility(visProtected);
+   AddMember('I : Integer');
+   ParseClass;
+end;
+
+procedure TTestClassType.TestConstProtectedEndEmpty;
+begin
+  // Empty const section: nothing must be consumed as a constant name when
+  // a visibility specifier follows "const" directly (empty generator output,
+  // IFDEF'ed-out const bodies).
+   StartVisibility(visPrivate);
+   AddMember('fmy : Integer');
+   FDecl.Add('strict private const');
    StartVisibility(visProtected);
    AddMember('I : Integer');
    ParseClass;

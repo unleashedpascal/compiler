@@ -110,11 +110,17 @@ type
     procedure CheckRestoredBoolConstExpr(const Path: string; Orig, Rest: TBoolConstExpr; Flags: TPCCheckFlags); virtual;
     procedure CheckRestoredParamsExpr(const Path: string; Orig, Rest: TParamsExpr; Flags: TPCCheckFlags); virtual;
     procedure CheckRestoredProcedureExpr(const Path: string; Orig, Rest: TProcedureExpr; Flags: TPCCheckFlags); virtual;
+    procedure CheckRestoredIfExpr(const Path: string; Orig, Rest: TIfExpr; Flags: TPCCheckFlags); virtual;
+    procedure CheckRestoredCaseExpr(const Path: string; Orig, Rest: TCaseExpr; Flags: TPCCheckFlags); virtual;
+    procedure CheckRestoredCaseExprBranch(const Path: string; Orig, Rest: TCaseExprBranch; Flags: TPCCheckFlags); virtual;
+    procedure CheckRestoredTryExceptExpr(const Path: string; Orig, Rest: TTryExceptExpr; Flags: TPCCheckFlags); virtual;
+    procedure CheckRestoredTryExceptExprOn(const Path: string; Orig, Rest: TTryExceptExprOn; Flags: TPCCheckFlags); virtual;
     procedure CheckRestoredRecordValues(const Path: string; Orig, Rest: TRecordValues; Flags: TPCCheckFlags); virtual;
     procedure CheckRestoredPasExprArray(const Path: string; Orig, Rest: TPasExprArray; Flags: TPCCheckFlags); virtual;
     procedure CheckRestoredArrayValues(const Path: string; Orig, Rest: TArrayValues; Flags: TPCCheckFlags); virtual;
     procedure CheckRestoredResString(const Path: string; Orig, Rest: TPasResString; Flags: TPCCheckFlags); virtual;
     procedure CheckRestoredAliasType(const Path: string; Orig, Rest: TPasAliasType; Flags: TPCCheckFlags); virtual;
+    procedure CheckRestoredTypeOfType(const Path: string; Orig, Rest: TPasTypeOfType; Flags: TPCCheckFlags); virtual;
     procedure CheckRestoredPointerType(const Path: string; Orig, Rest: TPasPointerType; Flags: TPCCheckFlags); virtual;
     procedure CheckRestoredSpecializedType(const Path: string; Orig, Rest: TPasSpecializeType; Flags: TPCCheckFlags); virtual;
     procedure CheckRestoredInlineSpecializedExpr(const Path: string; Orig, Rest: TInlineSpecializeExpr; Flags: TPCCheckFlags); virtual;
@@ -176,6 +182,10 @@ type
     procedure TestPC_EmptyUnit;
 
     procedure TestPC_Const;
+    procedure TestPC_IfExpr;
+    procedure TestPC_CaseExpr;
+    procedure TestPC_TryExceptExpr;
+    procedure TestPC_TypeOf;
     procedure TestPC_Var;
     procedure TestPC_Enum;
     procedure TestPC_Set;
@@ -1469,6 +1479,16 @@ begin
     CheckRestoredParamsExpr(Path,TParamsExpr(Orig),TParamsExpr(Rest),Flags)
   else if C=TProcedureExpr then
     CheckRestoredProcedureExpr(Path,TProcedureExpr(Orig),TProcedureExpr(Rest),Flags)
+  else if C=TIfExpr then
+    CheckRestoredIfExpr(Path,TIfExpr(Orig),TIfExpr(Rest),Flags)
+  else if C=TCaseExpr then
+    CheckRestoredCaseExpr(Path,TCaseExpr(Orig),TCaseExpr(Rest),Flags)
+  else if C=TCaseExprBranch then
+    CheckRestoredCaseExprBranch(Path,TCaseExprBranch(Orig),TCaseExprBranch(Rest),Flags)
+  else if C=TTryExceptExpr then
+    CheckRestoredTryExceptExpr(Path,TTryExceptExpr(Orig),TTryExceptExpr(Rest),Flags)
+  else if C=TTryExceptExprOn then
+    CheckRestoredTryExceptExprOn(Path,TTryExceptExprOn(Orig),TTryExceptExprOn(Rest),Flags)
   else if C=TRecordValues then
     CheckRestoredRecordValues(Path,TRecordValues(Orig),TRecordValues(Rest),Flags)
   else if C=TArrayValues then
@@ -1483,6 +1503,8 @@ begin
       or (C=TPasTypeAliasType)
       or (C=TPasClassOfType) then
     CheckRestoredAliasType(Path,TPasAliasType(Orig),TPasAliasType(Rest),Flags)
+  else if C=TPasTypeOfType then
+    CheckRestoredTypeOfType(Path,TPasTypeOfType(Orig),TPasTypeOfType(Rest),Flags)
   else if C=TPasPointerType then
     CheckRestoredPointerType(Path,TPasPointerType(Orig),TPasPointerType(Rest),Flags)
   else if C=TPasSpecializeType then
@@ -1720,6 +1742,63 @@ begin
   CheckRestoredPasExpr(Path,Orig,Rest,Flags);
 end;
 
+procedure TCustomTestPrecompile.CheckRestoredIfExpr(const Path: string; Orig,
+  Rest: TIfExpr; Flags: TPCCheckFlags);
+begin
+  CheckRestoredElement(Path+'.Cond',Orig.ConditionExpr,Rest.ConditionExpr,Flags);
+  CheckRestoredElement(Path+'.Then',Orig.ThenExpr,Rest.ThenExpr,Flags);
+  CheckRestoredElement(Path+'.Else',Orig.ElseExpr,Rest.ElseExpr,Flags);
+  CheckRestoredPasExpr(Path,Orig,Rest,Flags);
+end;
+
+procedure TCustomTestPrecompile.CheckRestoredCaseExpr(const Path: string;
+  Orig, Rest: TCaseExpr; Flags: TPCCheckFlags);
+var
+  i: Integer;
+begin
+  CheckRestoredElement(Path+'.Of',Orig.CaseExpr,Rest.CaseExpr,Flags);
+  AssertEquals(Path+'.Branches.Count',Orig.Branches.Count,Rest.Branches.Count);
+  for i:=0 to Orig.Branches.Count-1 do
+    CheckRestoredElement(Path+'.Branches['+IntToStr(i)+']',
+      TPasElement(Orig.Branches[i]),TPasElement(Rest.Branches[i]),Flags);
+  CheckRestoredElement(Path+'.Else',Orig.ElseExpr,Rest.ElseExpr,Flags);
+  CheckRestoredPasExpr(Path,Orig,Rest,Flags);
+end;
+
+procedure TCustomTestPrecompile.CheckRestoredCaseExprBranch(const Path: string;
+  Orig, Rest: TCaseExprBranch; Flags: TPCCheckFlags);
+var
+  i: Integer;
+begin
+  AssertEquals(Path+'.Labels.Count',Orig.Labels.Count,Rest.Labels.Count);
+  for i:=0 to Orig.Labels.Count-1 do
+    CheckRestoredElement(Path+'.Labels['+IntToStr(i)+']',
+      TPasElement(Orig.Labels[i]),TPasElement(Rest.Labels[i]),Flags);
+  CheckRestoredElement(Path+'.Value',Orig.Value,Rest.Value,Flags);
+end;
+
+procedure TCustomTestPrecompile.CheckRestoredTryExceptExpr(const Path: string;
+  Orig, Rest: TTryExceptExpr; Flags: TPCCheckFlags);
+var
+  i: Integer;
+begin
+  CheckRestoredElement(Path+'.Try',Orig.TryExpr,Rest.TryExpr,Flags);
+  AssertEquals(Path+'.OnBranches.Count',Orig.OnBranches.Count,Rest.OnBranches.Count);
+  for i:=0 to Orig.OnBranches.Count-1 do
+    CheckRestoredElement(Path+'.OnBranches['+IntToStr(i)+']',
+      TPasElement(Orig.OnBranches[i]),TPasElement(Rest.OnBranches[i]),Flags);
+  CheckRestoredElement(Path+'.Else',Orig.ElseExpr,Rest.ElseExpr,Flags);
+  CheckRestoredPasExpr(Path,Orig,Rest,Flags);
+end;
+
+procedure TCustomTestPrecompile.CheckRestoredTryExceptExprOn(const Path: string;
+  Orig, Rest: TTryExceptExprOn; Flags: TPCCheckFlags);
+begin
+  CheckRestoredElement(Path+'.VarEl',Orig.VarEl,Rest.VarEl,Flags);
+  CheckRestoredElOrRef(Path+'.TypeEl',Orig,Orig.TypeEl,Rest,Rest.TypeEl,Flags);
+  CheckRestoredElement(Path+'.Value',Orig.Value,Rest.Value,Flags);
+end;
+
 procedure TCustomTestPrecompile.CheckRestoredRecordValues(const Path: string;
   Orig, Rest: TRecordValues; Flags: TPCCheckFlags);
 var
@@ -1759,6 +1838,13 @@ end;
 
 procedure TCustomTestPrecompile.CheckRestoredAliasType(const Path: string;
   Orig, Rest: TPasAliasType; Flags: TPCCheckFlags);
+begin
+  CheckRestoredElOrRef(Path+'.DestType',Orig,Orig.DestType,Rest,Rest.DestType,Flags);
+  CheckRestoredElement(Path+'.Expr',Orig.Expr,Rest.Expr,Flags);
+end;
+
+procedure TCustomTestPrecompile.CheckRestoredTypeOfType(const Path: string;
+  Orig, Rest: TPasTypeOfType; Flags: TPCCheckFlags);
 begin
   CheckRestoredElOrRef(Path+'.DestType',Orig,Orig.DestType,Rest,Rest.DestType,Flags);
   CheckRestoredElement(Path+'.Expr',Orig.Expr,Rest.Expr,Flags);
@@ -2275,6 +2361,108 @@ begin
   'resourcestring',
   '  rs = ''rs'';',
   'implementation']);
+  WriteReadUnit;
+end;
+
+procedure TTestPrecompile.TestPC_TypeOf;
+begin
+  StartUnit(false);
+  Add([
+  '{$mode objfpc}',
+  'interface',
+  'type',
+  '  TObject = class end;',
+  '  generic TBox<T> = class',
+  '    Value: T;',
+  '    function Get(x: T): T;',
+  '  end;',
+  'var',
+  '  b: byte;',
+  '  a: array of word;',
+  '  c: type of b;',
+  '  d: type of a;',
+  '  e: type of a[0];',
+  'type',
+  '  TInt = type of b;',
+  '  TAlias = type type of b;',
+  '  TBoxW = specialize TBox<type of a[0]>;',
+  'function F(x: type of b): type of a[0];',
+  'implementation',
+  'function TBox.Get(x: T): T;',
+  'var',
+  '  tmp: type of x;',
+  'begin',
+  '  tmp:=(type of Value)(x);',
+  '  Result:=type of Value(tmp);',
+  'end;',
+  'function F(x: type of b): type of a[0];',
+  'begin',
+  '  Result:=type of a[0](x)+High(type of b);',
+  'end;']);
+  WriteReadUnit;
+end;
+
+procedure TTestPrecompile.TestPC_IfExpr;
+begin
+  StartUnit(false);
+  Add([
+  '{$mode delphi}',
+  'interface',
+  'const',
+  '  c = if 3>2 then 1 else 2;',
+  'var',
+  '  b: boolean;',
+  'function F: longint;',
+  'implementation',
+  'function F: longint;',
+  'begin',
+  '  Result:=if b then 1 else 2;',
+  'end;']);
+  WriteReadUnit;
+end;
+
+procedure TTestPrecompile.TestPC_CaseExpr;
+begin
+  StartUnit(false);
+  Add([
+  '{$mode delphi}',
+  'interface',
+  'type',
+  '  TEnum = (red, green, blue);',
+  'const',
+  '  c = case 3 of 1: 10; 2..4: 20; else 30 end;',
+  'var',
+  '  e: TEnum;',
+  'function F: string;',
+  'implementation',
+  'function F: string;',
+  'begin',
+  '  Result:=case e of red: ''r''; green, blue: ''gb'' end;',
+  'end;']);
+  WriteReadUnit;
+end;
+
+procedure TTestPrecompile.TestPC_TryExceptExpr;
+begin
+  StartUnit(false);
+  Add([
+  '{$mode delphi}',
+  'interface',
+  'type',
+  '  TObject = class end;',
+  '  Exception = class',
+  '    Msg: string;',
+  '  end;',
+  '  EAbort = class(Exception) end;',
+  'var',
+  '  s: string;',
+  'function F: string;',
+  'implementation',
+  'function F: string;',
+  'begin',
+  '  Result:=try s except ''Error'' end;',
+  '  Result:=try s except on EAbort do ''Abort''; on E: Exception do E.Msg; else ''Error'' end;',
+  'end;']);
   WriteReadUnit;
 end;
 

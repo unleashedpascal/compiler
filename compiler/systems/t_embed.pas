@@ -1923,20 +1923,28 @@ const
     (k:'RP2040' ;v:$e48bff56)
   );
 
+const
+  ExtraOptionsArg = '-Ttext=';
+
 var
   f,g : file;
   uf2block : Tuf2Block;
   totalRead,numRead : longWord;
   familyId,i : longWord;
   ExtraOptions : String;
+  idx : SizeInt;
 
 begin
-  if pos('-Ttext=',Info.ExtraOptions) > 0 then
+  idx:=pos(ExtraOptionsArg,Info.ExtraOptions);
+  if idx > 0 then
   begin
-    ExtraOptions := copy(Info.ExtraOptions,pos('-Ttext=',Info.ExtraOptions)+7,length(Info.ExtraOptions));
+    ExtraOptions := copy(Info.ExtraOptions,idx+Length(ExtraOptionsArg),length(Info.ExtraOptions));
     for i := 1 to length(ExtraOptions) do
-      if pos(copy(ExtraOptions,i,1),'0123456789abcdefxABCDEFX') = 0 then
-        ExtraOptions := copy(ExtraOptions,1,i);
+      if pos(ExtraOptions[i],'0123456789abcdefxABCDEFX') = 0 then
+        begin
+          ExtraOptions := copy(ExtraOptions,1,i);
+          break;
+        end;
     baseAddress := StrToIntDef(ExtraOptions,0);
   end;
 

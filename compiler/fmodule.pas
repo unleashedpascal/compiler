@@ -167,6 +167,7 @@ interface
         is_dbginfo_written,
         is_unit,
         in_interface,             { processing the interface part? }
+        in_type_inquiry,          { parsing the operand of the "type of" operator? }
         { allow global settings }
         in_global     : boolean;
         { Whether a mode switch is still allowed at this point in the parsing.}
@@ -829,6 +830,7 @@ implementation
         recompile_reason:=rr_unknown;
         in_interface:=true;
         in_global:=true;
+        in_type_inquiry:=false;
         is_unit:=_is_unit;
         islibrary:=false;
         ispackage:=false;
@@ -1201,6 +1203,7 @@ implementation
         interface_compiled:=false;
         in_interface:=true;
         in_global:=true;
+        in_type_inquiry:=false;
         mode_switch_allowed:=true;
         stringdispose(deprecatedmsg);
         stringdispose(namespace);

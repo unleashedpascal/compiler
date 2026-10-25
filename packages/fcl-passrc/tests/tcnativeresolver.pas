@@ -33,6 +33,22 @@ uses
 
 type
 
+  { TDummyPasResolver }
+
+  TDummyPasResolver = class(TPasResolver)
+  public
+    function FindUnit(const AName, InFilename: String; NameExpr, InFileExpr: TPasExpr): TPasModule;
+      override;
+  end;
+
+  { TDummyPasNativeResolver }
+
+  TDummyPasNativeResolver = class(TPasNativeResolver)
+  public
+    function FindUnit(const AName, InFilename: String; NameExpr, InFileExpr: TPasExpr): TPasModule;
+      override;
+  end;
+
   { TTestNativeResolver }
 
   TTestNativeResolver = class(TTestCase)
@@ -93,9 +109,15 @@ type
     procedure TestFoldBitSizeOfByte;
     procedure TestFoldTrunc;
     procedure TestFoldRound;
+    procedure TestResolveStringCopy;
+    procedure TestEnumAssignedOrdinal;
     procedure TestFoldPointerCast;
     procedure TestFoldNamedPointerCast;
     procedure TestAddressOfDegradesToUnknown;
+    procedure TestGenericClassOperatorResultOverload;
+    procedure TestGenericRecordTokenOperatorSpecialize;
+    procedure TestStrOnGenericTypeParam;
+    procedure TestValOnGenericTypeParam;
   end;
 
   { TTestElementStateFlags
@@ -111,7 +133,10 @@ type
     procedure TestRangeCheckedMarked;
     procedure TestRangeCheckedOffNotMarked;
     procedure TestOverflowCheckedMarked;
-    procedure TestBaseIgnoresPacking;
+    procedure TestAssertionsMarked;
+    procedure TestAssertionsOffNotMarked;
+    procedure TestOverflowCheckedCallMarked;
+    procedure TestBaseRecordsPacking;
     procedure TestInterfaceOnlyForwardProcGate;
     procedure TestForwardProcUnresolvedFail;
     procedure TestBaseRejectsTypedPtrArithOff;
@@ -122,8 +147,8 @@ type
   { TTestNativePacking
 
     The native memory-layout packing directives, captured per type at its
-    declaration and stored global-free on the element (enum/record scope, set
-    resolve-data). Uses the native engine. }
+    declaration and stored on the element (enum/set: fields of the type,
+    record: its scope). Uses the native engine. }
 
   TTestNativePacking = class(TCustomNativeTestResolver)
   private
@@ -133,6 +158,11 @@ type
   published
     procedure TestMinEnumSizeCaptured;
     procedure TestMinEnumSizeDefault;
+    procedure TestMinEnumSizeDelphiMode;
+    procedure TestMinEnumSizeModeReset;
+    procedure TestMinEnumSizeZDirective;
+    procedure TestEnumHolesFPCRule;
+    procedure TestEnumHolesPositiveStart;
     procedure TestPackRecordsCaptured;
     procedure TestPackSetCaptured;
     procedure TestPackRecordsCrossResolver;
@@ -142,10 +172,17 @@ type
 
   { TTestNativePointerMath
 
-    Native pointer arithmetic matching FPC: under {$POINTERMATH OFF}, the untyped
-    Pointer, a pointer declared under {$POINTERMATH ON}, and a ^(Ansi)Char pointer
+    Native pointer arithmetic matching FPC: under $POINTERMATH OFF, the untyped
+    Pointer, a pointer declared under $POINTERMATH ON, and a ^(Ansi)Char pointer
     permit +/- and indexing; Inc/Dec is allowed on any pointer. A plain typed
     pointer with none of these still requires the switch. }
+
+  TTestNativeProcChecks = class(TCustomNativeTestResolver)
+  published
+    procedure TestCDeclVarArgsNeedExternal;
+    procedure TestNoStackFrameNeedsAssembler;
+    procedure TestCopyOfCharIsShortString;
+  end;
 
   TTestNativePointerMath = class(TCustomNativeTestResolver)
   published
@@ -175,6 +212,32 @@ type
 
 implementation
 
+{ TDummyPasResolver }
+
+function TDummyPasResolver.FindUnit(const AName, InFilename: String; NameExpr, InFileExpr: TPasExpr
+  ): TPasModule;
+begin
+  Result:=nil;
+  raise Exception.Create('20260716163809');
+  if AName='' then ;
+  if InFilename='' then ;
+  if NameExpr=nil then ;
+  if InFileExpr=nil then ;
+end;
+
+{ TDummyPasNativeResolver }
+
+function TDummyPasNativeResolver.FindUnit(const AName, InFilename: String; NameExpr,
+  InFileExpr: TPasExpr): TPasModule;
+begin
+  Result:=nil;
+  raise Exception.Create('20260716163907');
+  if AName='' then ;
+  if InFilename='' then ;
+  if NameExpr=nil then ;
+  if InFileExpr=nil then ;
+end;
+
 function TTestNativeResolver.AliasBaseType(R: TPasResolver; const aName: string;
   out bt: TResolverBaseType): boolean;
 
@@ -197,13 +260,14 @@ procedure TTestNativeResolver.TestNativeRegistersConstEvalIntrinsics;
 var
   R: TPasNativeResolver;
 begin
-  R:=TPasNativeResolver.Create;
+  R:=TDummyPasNativeResolver.Create;
   try
     R.AddObjFPCBuiltInIdentifiers;
     AssertNotNull('SizeOf registered',R.BuiltInProcs[bfSizeOf]);
     AssertNotNull('BitSizeOf registered',R.BuiltInProcs[bfBitSizeOf]);
     AssertNotNull('Trunc registered',R.BuiltInProcs[bfTrunc]);
     AssertNotNull('Round registered',R.BuiltInProcs[bfRound]);
+    AssertNotNull('Copy(string) registered',R.BuiltInProcs[bfCopyString]);
   finally
     R.Free;
   end;
@@ -215,13 +279,14 @@ procedure TTestNativeResolver.TestBaseOmitsConstEvalIntrinsics;
 var
   R: TPasResolver;
 begin
-  R:=TPasResolver.Create;
+  R:=TDummyPasResolver.Create;
   try
     R.AddObjFPCBuiltInIdentifiers;
     AssertNull('SizeOf not registered on base',R.BuiltInProcs[bfSizeOf]);
     AssertNull('BitSizeOf not registered on base',R.BuiltInProcs[bfBitSizeOf]);
     AssertNull('Trunc not registered on base',R.BuiltInProcs[bfTrunc]);
     AssertNull('Round not registered on base',R.BuiltInProcs[bfRound]);
+    AssertNull('Copy(string) not registered on base',R.BuiltInProcs[bfCopyString]);
   finally
     R.Free;
   end;
@@ -234,7 +299,7 @@ var
   R: TPasNativeResolver;
   bt: TResolverBaseType;
 begin
-  R:=TPasNativeResolver.Create;
+  R:=TDummyPasNativeResolver.Create;
   try
     R.AddObjFPCBuiltInIdentifiers;
     AssertTrue('Boolean8 -> btByteBool',AliasBaseType(R,'Boolean8',bt) and (bt=btByteBool));
@@ -255,7 +320,7 @@ var
   R: TPasResolver;
   bt: TResolverBaseType;
 begin
-  R:=TPasResolver.Create;
+  R:=TDummyPasResolver.Create;
   try
     R.AddObjFPCBuiltInIdentifiers;
     AssertFalse('Boolean8 absent on base',AliasBaseType(R,'Boolean8',bt));
@@ -347,6 +412,48 @@ begin
   Fail('const '+aName+' not found');
 end;
 
+
+procedure TTestNativeResolverFold.TestResolveStringCopy;
+// The native resolver accepts Copy(string,start,count) -> string (base rejects it).
+begin
+  StartProgram(false);
+  Add([
+  'var s, r: string;',
+  'begin',
+  '  s:=''hello''; r:=Copy(s,1,3);',
+  '']);
+  ParseProgram;
+end;
+
+procedure TTestNativeResolverFold.TestEnumAssignedOrdinal;
+// Native uses the ASSIGNED-value ordinal model: type e=(a,b:=8) -> Ord(b)=8
+// (base/pas2js index model would give 1).
+var
+  V: TResEvalValue;
+begin
+  StartProgram(false);
+  Add([
+  'type TEnum = (eA, eB:=8, eC);',
+  'const',
+  '  c = ord(eB);',
+  '  d = ord(eC);',
+  'begin',
+  '']);
+  ParseProgram;
+  V:=EvalNamedConst('c');
+  try
+    AssertNotNull('ord(eB) folds',V);
+    AssertEquals('ord(eB)=8 (assigned)',8,TResEvalInt(V).Int);
+  finally
+    ReleaseEvalValue(V);
+  end;
+  V:=EvalNamedConst('d');
+  try
+    AssertEquals('ord(eC)=9 (assigned+1)',9,TResEvalInt(V).Int);
+  finally
+    ReleaseEvalValue(V);
+  end;
+end;
 
 function TTestNativeResolverFold.FoldProgramConst(const aExpr: string
   ): TResEvalValue;
@@ -516,6 +623,108 @@ begin
   end;
 end;
 
+procedure TTestNativeResolverFold.TestGenericClassOperatorResultOverload;
+// GitLab #40256: a generic record may declare two conversion operators
+// (Implicit/Explicit) that differ only by their result type. The generic
+// operator implementation header "class operator TBox<T>.Implicit" must parse,
+// and the two Implicit operators must not collide as a "Duplicate identifier"
+// (conversion operators overload on the result type). Accepted by the native
+// resolver (and real FPC); the base resolver cannot declare it.
+begin
+  StartProgram(false);
+  Add([
+  '{$mode delphi}',
+  'type',
+  '  TBox<T> = record',
+  '    class operator Implicit(const b: TBox<T>): string;',
+  '    class operator Implicit(const b: TBox<T>): longint;',
+  '  end;',
+  'class operator TBox<T>.Implicit(const b: TBox<T>): string;',
+  'begin',
+  'end;',
+  'class operator TBox<T>.Implicit(const b: TBox<T>): longint;',
+  'begin',
+  'end;',
+  'begin',
+  '']);
+  ParseProgram;
+end;
+
+procedure TTestNativeResolverFold.TestGenericRecordTokenOperatorSpecialize;
+// GitLab #31184: a generic record with an overloaded TOKEN operator (+),
+// applied on a specialization. Specializing the operator's implementation used
+// to raise "not yet implemented" because the impl-proc name "TArr<T>.+" lost its
+// "TArr." class prefix during the unary-vs-binary (+ = positive vs add) name
+// correction, so the specialized impl-proc name could not be built. Accepted by
+// the native resolver (and real FPC); the base resolver cannot declare the
+// self-referential operator argument.
+begin
+  StartProgram(false);
+  Add([
+  '{$mode delphi}',
+  'type',
+  '  TArr<T> = record',
+  '    v: T;',
+  '    class operator +(const a,b: TArr<T>): TArr<T>;',
+  '  end;',
+  'class operator TArr<T>.+(const a,b: TArr<T>): TArr<T>;',
+  'begin',
+  '  Result.v:=a.v+b.v;',
+  'end;',
+  'var',
+  '  a: TArr<word>;',
+  'begin',
+  '  if a.v=0 then ;',
+  '']);
+  ParseProgram;
+end;
+
+procedure TTestNativeResolverFold.TestStrOnGenericTypeParam;
+// Str(v,s) on a value whose type is a generic type parameter must be accepted:
+// the concrete type is only known after specialization, so the check is
+// deferred. It used to fail in the generic body with
+// "Incompatible type for arg no. 1: Got T, expected boolean, integer, enum".
+begin
+  StartProgram(false);
+  Add([
+  '{$mode delphi}',
+  'type',
+  '  TBox<T> = record',
+  '    Value: T;',
+  '    function S: string;',
+  '  end;',
+  'function TBox<T>.S: string;',
+  'begin',
+  '  Str(Value, Result);',
+  'end;',
+  'begin',
+  '']);
+  ParseProgram;
+end;
+
+procedure TTestNativeResolverFold.TestValOnGenericTypeParam;
+// Val(s, v, code) where v (a var/out argument) has a generic type-parameter
+// type must be accepted: the concrete type is only known after specialization,
+// so the "var param must match exactly" check is deferred. It used to fail in
+// the generic body with "Incompatible type ... Var param must match exactly".
+begin
+  StartProgram(false);
+  Add([
+  '{$mode delphi}',
+  'type',
+  '  TBox<T> = record',
+  '    function Parse(const s: string): T;',
+  '  end;',
+  'function TBox<T>.Parse(const s: string): T;',
+  'var code: longint;',
+  'begin',
+  '  Val(s, Result, code);',
+  'end;',
+  'begin',
+  '']);
+  ParseProgram;
+end;
+
 
 { TTestElementStateFlags }
 
@@ -581,15 +790,97 @@ begin
 end;
 
 
-procedure TTestElementStateFlags.TestBaseIgnoresPacking;
+procedure TTestElementStateFlags.TestAssertionsMarked;
+
+var
+  Simple: TPasImplSimple;
+
+begin
+  StartProgram(false);
+  Add('{$C+}');
+  Add('var b: boolean;');
+  Add('begin');
+  Add('  Assert(b);');
+  ParseProgram;
+  Simple:=FirstStatement as TPasImplSimple;
+  AssertEquals('Assert call is a params expression',TParamsExpr,Simple.Expr.ClassType);
+  AssertTrue('Assert call under {$C+} is marked for assertions',
+    pesfAssertions in Simple.Expr.States);
+end;
+
+
+procedure TTestElementStateFlags.TestAssertionsOffNotMarked;
+
+var
+  Simple: TPasImplSimple;
+
+begin
+  StartProgram(false);
+  Add('{$C-}');
+  Add('var b: boolean;');
+  Add('begin');
+  Add('  Assert(b);');
+  ParseProgram;
+  Simple:=FirstStatement as TPasImplSimple;
+  AssertFalse('Assert call under {$C-} is not marked for assertions',
+    pesfAssertions in Simple.Expr.States);
+end;
+
+
+procedure TTestElementStateFlags.TestOverflowCheckedCallMarked;
+
+var
+  Assign: TPasImplAssign;
+
+begin
+  StartProgram(false);
+  Add('{$Q+}');
+  Add('var i: longint;');
+  Add('function Twice(x: longint): longint;');
+  Add('begin');
+  Add('  Result:=x+x;');
+  Add('end;');
+  Add('begin');
+  Add('  i:=Twice(i);');
+  ParseProgram;
+  Assign:=FirstStatement as TPasImplAssign;
+  AssertEquals('right side is a call',TParamsExpr,Assign.Right.ClassType);
+  AssertTrue('a call under {$Q+} is overflow-checked',
+    ResolverEngine.IsOverflowChecked(Assign.Right));
+end;
+
+
+procedure TTestNativeProcChecks.TestCopyOfCharIsShortString;
+
+var
+  Assign: TPasImplAssign;
+  Resolved: TPasResolverResult;
+
+begin
+  StartProgram(false);
+  Add('var c: char; w: widechar; s: string;');
+  Add('begin');
+  Add('  s:=Copy(c,1,1);');
+  Add('  s:=Copy(w,1,1);');
+  ParseProgram;
+  Assign:=TPasImplAssign(PasProgram.InitializationSection.Elements[0]);
+  ResolverEngine.ComputeElement(Assign.Right,Resolved,[]);
+  AssertTrue('Copy of a Char is a ShortString',Resolved.BaseType=btShortString);
+  Assign:=TPasImplAssign(PasProgram.InitializationSection.Elements[1]);
+  ResolverEngine.ComputeElement(Assign.Right,Resolved,[]);
+  AssertTrue('Copy of a WideChar is a UnicodeString',Resolved.BaseType=btUnicodeString);
+end;
+
+
+procedure TTestElementStateFlags.TestBaseRecordsPacking;
 
 var
   i: Integer;
   El: TPasElement;
 
 begin
-  // NEGATIVE GUARD: the base (pas2js) resolver records no packing — the Set*
-  // seams are no-ops, so GetMinEnumSize stays 0 even under {$MINENUMSIZE}.
+  // The {$MINENUMSIZE} value is a field of TPasEnumType, so the base resolver
+  // records it too (pas2js does not use it).
   StartProgram(false);
   Add('{$MINENUMSIZE 4}');
   Add('type');
@@ -604,7 +895,8 @@ begin
       break;
       end;
   AssertNotNull('enum type found',El);
-  AssertEquals('base resolver ignores {$MINENUMSIZE}',0,ResolverEngine.GetMinEnumSize(El));
+  AssertEquals('base resolver records {$MINENUMSIZE}',4,ResolverEngine.GetMinEnumSize(El));
+  AssertEquals('stored on the type',4,TPasEnumType(El).MinSize);
 end;
 
 
@@ -744,8 +1036,100 @@ begin
   Add('begin');
   ParseProgram;
   EnumType:=TPasEnumType(FindDecl(TPasEnumType));
-  AssertEquals('no min-enum-size',0,NativeEngine.GetMinEnumSize(EnumType));
-  AssertEquals('natural enum storage size = 1',1,NativeEngine.GetEnumTypeSize(EnumType));
+  AssertEquals('FPC mode default {$PACKENUM 4}',4,NativeEngine.GetMinEnumSize(EnumType));
+  AssertEquals('enum storage size = 4',4,NativeEngine.GetEnumTypeSize(EnumType));
+  AssertEquals('size stored on the type',4,EnumType.Size);
+end;
+
+
+procedure TTestNativePacking.TestMinEnumSizeDelphiMode;
+
+var
+  EnumType: TPasEnumType;
+  SetType: TPasSetType;
+
+begin
+  // Delphi mode: 1-byte enums and 1-byte set granularity, as fpc sets them.
+  StartProgram(false);
+  Add('{$mode delphi}');
+  Add('type');
+  Add('  TEnum = (red, green, blue);');
+  Add('  TSet = set of TEnum;');
+  Add('begin');
+  ParseProgram;
+  EnumType:=TPasEnumType(FindDecl(TPasEnumType));
+  AssertEquals('enum storage size = 1',1,NativeEngine.GetEnumTypeSize(EnumType));
+  SetType:=TPasSetType(FindDecl(TPasSetType));
+  AssertEquals('pack-set 1',1,NativeEngine.GetPackSet(SetType));
+end;
+
+
+procedure TTestNativePacking.TestMinEnumSizeModeReset;
+
+var
+  EnumType: TPasEnumType;
+
+begin
+  // A {$mode} directive resets an earlier {$PACKENUM} to the mode's default.
+  StartProgram(false);
+  Add('{$PACKENUM 1}');
+  Add('{$mode objfpc}');
+  Add('type');
+  Add('  TEnum = (red, green, blue);');
+  Add('begin');
+  ParseProgram;
+  EnumType:=TPasEnumType(FindDecl(TPasEnumType));
+  AssertEquals('objfpc resets to 4',4,NativeEngine.GetEnumTypeSize(EnumType));
+end;
+
+
+procedure TTestNativePacking.TestMinEnumSizeZDirective;
+
+var
+  EnumType: TPasEnumType;
+
+begin
+  StartProgram(false);
+  Add('{$Z2}');
+  Add('type');
+  Add('  TEnum = (red, green, blue);');
+  Add('begin');
+  ParseProgram;
+  EnumType:=TPasEnumType(FindDecl(TPasEnumType));
+  AssertEquals('{$Z2} gives 2 bytes',2,NativeEngine.GetEnumTypeSize(EnumType));
+end;
+
+
+procedure TTestNativePacking.TestEnumHolesFPCRule;
+
+var
+  EnumType: TPasEnumType;
+
+begin
+  // fpc: a first value above 0 is a jump; a negative start is not.
+  StartProgram(false);
+  Add('type');
+  Add('  TNeg = (nM = -1, nZ, nP);');
+  Add('begin');
+  ParseProgram;
+  EnumType:=TPasEnumType(FindDecl(TPasEnumType));
+  AssertFalse('negative start has no holes',NativeEngine.EnumHasHoles(EnumType));
+end;
+
+
+procedure TTestNativePacking.TestEnumHolesPositiveStart;
+
+var
+  EnumType: TPasEnumType;
+
+begin
+  StartProgram(false);
+  Add('type');
+  Add('  TPos = (pOne = 1, pTwo);');
+  Add('begin');
+  ParseProgram;
+  EnumType:=TPasEnumType(FindDecl(TPasEnumType));
+  AssertTrue('start above 0 has holes',NativeEngine.EnumHasHoles(EnumType));
 end;
 
 
@@ -871,8 +1255,6 @@ end;
 procedure TTestNativePacking.TestPackRecordsGenericSpecializeCrossResolver;
 
 var
-  i: Integer;
-  El: TPasElement;
   Spec: TPasSpecializeType;
   Specialized: TPasGenericType;
 
@@ -903,7 +1285,7 @@ end;
 
 { TTestNativePointerMath
 
-  Note: the pointer arithmetic sits inside a procedure so that {$POINTERMATH OFF}
+  Note: the pointer arithmetic sits inside a procedure so that $POINTERMATH OFF
   is captured on the procedure scope. The main begin..end of a program resolves
   its bool switches from the module scope, which is snapshotted at the program
   header — before any directive — so an OFF there would have no effect. }
@@ -1080,6 +1462,28 @@ begin
 end;
 
 
+procedure TTestNativeProcChecks.TestCDeclVarArgsNeedExternal;
+begin
+  // NATIVE: a cdecl routine with "array of const" is variadic -> must be external.
+  StartProgram(true,[supTVarRec]);
+  Add('procedure Foo(args: array of const); cdecl;');
+  Add('begin');
+  Add('end;');
+  Add('begin');
+  CheckResolverException(sVarArgsNeedCDeclAndExternal,nVarArgsNeedCDeclAndExternal);
+end;
+
+procedure TTestNativeProcChecks.TestNoStackFrameNeedsAssembler;
+begin
+  // NATIVE: nostackframe requires assembler.
+  StartProgram(false);
+  Add('procedure Foo; nostackframe;');
+  Add('begin');
+  Add('end;');
+  Add('begin');
+  CheckResolverException(sNoStackFrameWithoutAssembler,nNoStackFrameWithoutAssembler);
+end;
+
 initialization
   RegisterTest(TTestNativeResolver);
   RegisterTest(TTestNativeResolverFold);
@@ -1087,4 +1491,5 @@ initialization
   RegisterTest(TTestNativePacking);
   RegisterTest(TTestNativePointerMath);
   RegisterTest(TTestNativeBitPacked);
+  RegisterTest(TTestNativeProcChecks);
 end.

@@ -2,179 +2,331 @@ unit system;
 interface
 
 {$define FPC_IS_SYSTEM}
-
-{$DEFINE FPCRTL_FILESYSTEM_SINGLE_BYTE_API}
-
+{$define FPCRTL_FILESYSTEM_SINGLE_BYTE_API}
 
 
 {$I systemh.inc}
 
-{$ifndef FPUNONE}
+//const
+{$ifdef FPC_HAS_FEATURE_EXITCODE}
+  maxExitCode = 255;
+{$endif}
+
+{$ifdef FPC_HAS_FEATURE_FILEIO}
+  AllowDirectorySeparators : set of AnsiChar = ['\','/'];
+  AllowDriveSeparators : set of AnsiChar = [':'];
+  DirectorySeparator = '/';
+  DriveSeparator = ':';
+  ExtensionSeparator = '.';
+  PathSeparator = ':';
+  MaxPathLen = 255;
+  LFNSupport = true;
+  FileNameCaseSensitive = true;
+  FileNameCasePreserving = true;
+  AllFilesMask = '*';
+{$endif}
+
+{$if defined(FPC_HAS_FEATURE_TEXTIO) or defined(FPC_HAS_FEATURE_FILEIO)}
+  UnusedHandle    = $ffff;
+  StdInputHandle  = 0;
+  StdOutputHandle = 1;
+  StdErrorHandle  = 2;
+{$endif}
+
+{$ifdef FPC_HAS_FEATURE_TEXTIO}
+  CtrlZMarksEOF: boolean = true;
+  DefaultTextLineBreakStyle : TTextLineBreakStyle = tlbsLF;
+  LineEnding = #10;
+  sLineBreak = #10;
+{$endif}
+
+{$ifdef FPC_HAS_FEATURE_COMMANDARGS}
+var
+  argc: LongInt = 0;
+  argv: PPAnsiChar = nil;
+  envp: PPAnsiChar = nil;
+{$endif}
+
+procedure gte_Command(const AValue: DWord); [internproc:fpc_in_gtecommand_x];
+
 {$ifdef FPC_HAS_FEATURE_SOFTFPU}
-
-{$define fpc_softfpu_interface}
-{$i softfpu.pp}
-{$undef fpc_softfpu_interface}
-
-{$endif FPC_HAS_FEATURE_SOFTFPU}
-
-{$endif FPUNONE}
-
-const
-    maxExitCode = 255;
-    AllowDirectorySeparators : set of AnsiChar = ['\','/'];
-    DirectorySeparator = '/';
-  { Default filehandles }
-    UnusedHandle    = $ffff;{ instead of -1, as it is a word value}
-    StdInputHandle  = 0;
-    StdOutputHandle = 1;
-    StdErrorHandle  = 2;
-    CtrlZMarksEOF: boolean = true; (* #26 is considered as end of file *)
-    DefaultTextLineBreakStyle : TTextLineBreakStyle = tlbsLF;
-    LineEnding = #10;
-    PathSeparator = '/';
-    MaxPathLen = 255;
-    LFNSupport = true;
-    FileNameCaseSensitive = true;
-    sLineBreak = #10;
-    AllFilesMask = '*';
+  {$define fpc_softfpu_interface}
+  {$i softfpu.pp}
+  {$undef fpc_softfpu_interface}
+{$endif}
 
 var
-  argc:longint=0;
-  argv:PPAnsiChar;
-  envp:PPAnsiChar;
+  PS1RandSeed: LongWord = $12345678;
+procedure Randomize;
+function Random(l: LongInt): LongInt;
 
-procedure gte_Command(Const AValue : DWord);[internproc:fpc_in_gtecommand_x];
+
+var pcsxPresent: Boolean = false;
+
+
+{ FromHere is the EXACT 8-aligned user-data address. On success it advances
+  to the address of the next possible payload; on failure it is unchanged,
+  the result is nil, and the RTL emits a WriteLn diagnostic. }
+procedure GetMemFrom(var FromHere: Pointer; var P: Pointer; Size: PtrUInt);
+
+{ Predict the first-fit GetMem(Size) result, WITHOUT reserving it. }
+function GetNextFreeAddress(Size: PtrUInt): Pointer;
+
+{ Given an ALLOCATED payload pointer, return the following payload address
+  accounting for the real 8-byte header and aligned/absorbed block size. }
+function GetAddressAfterBlock(P: Pointer): Pointer;
+
+
+function CurrentSP: PtrUInt;
+function SetStackLength(NewLength: SizeUInt): Boolean;
+
+
+procedure TraceHeap(const stage: ShortString);
+procedure TraceHeapBuffer(const labelText: ShortString; buffer: Pointer; bytes: PtrUInt);
+
+
+function PrintHexValue(value: LongWord): ShortString;
+
+
+const
+  StackCalibrationFrames = 300;
+procedure InitStackWatermark;
+procedure ReportStackUsage(const stage: ShortString);
+procedure TuneStackReservation;
+function BorrowStackBuffer(bytes: SizeUInt): Pointer;
+procedure ReleaseStackBuffer;
 
 implementation
 
 var
-  StkLen: SizeUInt; external name '__stklen';
-  bss_end: record end; external name '__bss_end__';
+  StkLen : SizeUInt; external name '__stklen';
+  bss_end : record end; external name '__bss_end__';
 
-function pcsxPresent: boolean;
-begin
-  if pdword($1f802080)^ = $58534350 then result:= true else result:= false;
+
+function CurrentSP: PtrUInt; assembler; nostackframe;
+asm
+  addu $v0, $sp, $zero
 end;
 
-procedure _putchar(ch: char);
+
+
+function PrintHexValue(value: LongWord): ShortString;
+const
+  digits: string[16] = '0123456789abcdef';
+var
+  i: LongInt;
 begin
-  if not pcsxPresent then exit;
-  pbyte($1f802080)^:= byte(ch);
+  SetLength(Result, 10);
+  Result[1] := '0';
+  Result[2] := 'x';
+
+  for i := 10 downto 3 do begin
+    Result[i] := digits[(value and 15) + 1];
+    value := value shr 4;
+  end;
 end;
 
-{I ../mips/setjump.inc}
-{$I system.inc}
 
-{$ifndef FPUNONE}
+function check4pcsxPresent: Boolean;
+var
+  ctrl: LongWord;
+begin
+  // Read DEV8 configuration
+  ctrl := PLongWord($1F80101C)^;
+
+  // Expand DEV8 from 128 to at least 256 bytes
+  if (ctrl and $001F0000) < $00080000 then
+    PLongWord($1F80101C)^ :=
+      (ctrl and not $001F0000) or $00080000;
+
+  // Check PCSX-Redux signature
+  Result :=
+    (PByte($1F802080)^ = Ord('P')) and
+    (PByte($1F802081)^ = Ord('C')) and
+    (PByte($1F802082)^ = Ord('S')) and
+    (PByte($1F802083)^ = Ord('X'));
+
+end;
+
+
+{$ifdef FPC_HAS_FEATURE_TEXTIO}
+
+
+procedure _putchar(ch: Char);
+begin
+  if pcsxPresent then
+    PByte($1f802080)^:= Byte(ch);
+end;
+{$endif}
+
+
+{$if defined(FPC_HAS_FEATURE_CLASSES) and not defined(FPC_HAS_FEATURE_EXCEPTIONS)}
+
+function RaiseList: PExceptObject;
+begin
+  Result:= nil;
+end;
+
+function AcquireExceptionObject: Pointer;
+begin
+  Result:= nil;
+end;
+
+procedure ReleaseExceptionObject;
+begin
+end;
+
+{$endif}
+
+
 {$ifdef FPC_HAS_FEATURE_SOFTFPU}
 
-{$define fpc_softfpu_implementation}
-{$i softfpu.pp}
-{$undef fpc_softfpu_implementation}
+  {$define fpc_softfpu_implementation}
+  {$i softfpu.pp}
+  {$undef fpc_softfpu_implementation}
 
-{ we get these functions and types from the softfpu code }
-{$define FPC_SYSTEM_HAS_float64}
-{$define FPC_SYSTEM_HAS_float32}
-{$define FPC_SYSTEM_HAS_flag}
-{$define FPC_SYSTEM_HAS_extractFloat64Frac0}
-{$define FPC_SYSTEM_HAS_extractFloat64Frac1}
-{$define FPC_SYSTEM_HAS_extractFloat64Exp}
-{$define FPC_SYSTEM_HAS_extractFloat64Frac}
-{$define FPC_SYSTEM_HAS_extractFloat64Sign}
-{$define FPC_SYSTEM_HAS_ExtractFloat32Frac}
-{$define FPC_SYSTEM_HAS_extractFloat32Exp}
-{$define FPC_SYSTEM_HAS_extractFloat32Sign}
+  {$define FPC_SYSTEM_HAS_float64}
+  {$define FPC_SYSTEM_HAS_float32}
+  {$define FPC_SYSTEM_HAS_flag}
+
+  {$define FPC_SYSTEM_HAS_extractFloat64Frac0}
+  {$define FPC_SYSTEM_HAS_extractFloat64Frac1}
+  {$define FPC_SYSTEM_HAS_extractFloat64Exp}
+  {$define FPC_SYSTEM_HAS_extractFloat64Frac}
+  {$define FPC_SYSTEM_HAS_extractFloat64Sign}
+
+  {$define FPC_SYSTEM_HAS_ExtractFloat32Frac}
+  {$define FPC_SYSTEM_HAS_extractFloat32Exp}
+  {$define FPC_SYSTEM_HAS_extractFloat32Sign}
 
 {$endif FPC_HAS_FEATURE_SOFTFPU}
-{$endif FPUNONE}
+
+{$define HAS_MEMORYMANAGER}
+
+{$IMPLICITEXCEPTIONS OFF}
+
+{$I system.inc}
+
+{$I sysstack.inc}
+
 
 procedure Randomize;
 begin
-  randseed:= 1234;
+
+  PS1RandSeed:= PS1RandSeed xor LongWord(PtrUInt(@PS1RandSeed)) xor $A5A5A5A5;
+
+  if PS1RandSeed = 0 then PS1RandSeed:= $12345678;
+
 end;
 
+
+function Random(l: LongInt): LongInt;
+var
+  r : LongWord;
+
+begin
+
+  r:= PS1RandSeed;
+
+  r:= r xor (r shl 13);
+  r:= r xor (r shr 17);
+  r:= r xor (r shl 5);
+
+  PS1RandSeed:= r;
+
+  if l > 0 then
+    Result:= LongInt(r mod LongWord(l))
+  else
+    Result:= 0;
+
+end;
+
+
+{$ifdef FPC_HAS_FEATURE_PROCESSES}
 function GetProcessID: LongWord;
 begin
-  result:= 0;
+  Result:= 0;
 end;
+{$endif}
 
+{$ifdef FPC_HAS_FEATURE_COMMANDARGS}
 function ParamCount: LongInt;
 begin
-  ParamCount:= 0;
+  Result:= 0;
 end;
 
 function ParamStr(l: LongInt): ShortString;
 begin
-  result:='';
+  Result:= '';
 end;
+{$endif}
 
+{$ifdef FPC_HAS_FEATURE_TEXTIO}
 procedure SysInitStdIO;
 begin
-  OpenStdIO(Input,fmInput,StdInputHandle);
-  OpenStdIO(Output,fmOutput,StdOutputHandle);
-  OpenStdIO(ErrOutput,fmOutput,StdErrorHandle);
-  OpenStdIO(StdOut,fmOutput,StdOutputHandle);
-  OpenStdIO(StdErr,fmOutput,StdErrorHandle);
+  OpenStdIO(Input,     fmInput,  StdInputHandle);
+  OpenStdIO(Output,    fmOutput, StdOutputHandle);
+  OpenStdIO(ErrOutput, fmOutput, StdErrorHandle);
+  OpenStdIO(StdOut,    fmOutput, StdOutputHandle);
+  OpenStdIO(StdErr,    fmOutput, StdErrorHandle);
 end;
+{$endif}
 
-function CheckInitialStkLen(stklen : SizeUInt) : SizeUInt;
+function CheckInitialStkLen(stklen: SizeUInt): SizeUInt;
 const
-  MinHeap = 1024;  // always leave at least 1k heap
+  MinHeap = 1024;
 var
-  MaxStack: SizeInt;
+  MaxStack : SizeInt;
+
 begin
-  MaxStack:=SizeInt(PtrUInt($801FFFF0)-PtrUInt(@bss_end))-MinHeap;
-  if stklen<MaxStack then
-    result:= stklen
+
+  MaxStack:= SizeInt(PtrUInt($801ffff0) - PtrUInt(@bss_end)) - MinHeap;
+
+  if MaxStack < 0 then MaxStack := 0;
+
+  if stklen < SizeUInt(MaxStack) then
+    Result:= stklen
   else
-    result:=MaxStack;
+    Result:= SizeUInt(MaxStack);
+
 end;
 
 procedure system_exit;
 begin
-  repeat
-  until false;
-end;
-
-
-function alignvalue(x, a : dword): dword;
-var r : dword;
-begin
-  r:= x mod a;
-  if r <> 0 then begin
-    result:= x + (a - r);
-  end else result:= x;
+  repeat until false;
 end;
 
 begin
-  StackLength:=CheckInitialStkLen(stklen);
-  StackBottom:=Pointer(PtrUInt($801FFFF0)-PtrUInt(StackLength));
+  StackLength:= CheckInitialStkLen(StkLen);
+  StackBottom:= Pointer(PtrUInt($801ffff0) - PtrUInt(StackLength));
 
-  { Debug printing via writeln (visible in emulator logs) is possible, so
-    pretend to be a console application. }
-  IsConsole := TRUE;
-  { To be set if this is a library and not a program  }
-  IsLibrary := FALSE;
+  pcsxPresent:= check4pcsxPresent;
 
-  { Setup heap }
-  _InitHeap(PtrUInt(@bss_end));
+{$ifdef FPC_HAS_FEATURE_TEXTIO}
+  IsConsole:= True;
+{$else}
+  IsConsole:= False;
+{$endif}
+
+{$ifdef FPC_HAS_FEATURE_HEAP}
+  _InitHeap(PtrUInt(@bss_end), PtrUInt(StackBottom));
   InitHeap;
+{$endif}
 
-  { Init exceptions }
+{$ifdef FPC_HAS_FEATURE_EXCEPTIONS}
   SysInitExceptions;
+{$endif}
 
-  { Init unicode strings }
-  initunicodestringmanager;
+{$ifdef FPC_HAS_FEATURE_WIDESTRINGS}
+  InitUnicodeStringManager;
+{$endif}
 
-  { Setup stdin, stdout and stderr }
+{$ifdef FPC_HAS_FEATURE_TEXTIO}
   SysInitStdIO;
-
-  { Reset IO Error }
   InOutRes:= 0;
+{$endif}
 
 {$ifdef FPC_HAS_FEATURE_THREADING}
-  { Initialize the thread manager }
   InitSystemThreads;
 {$endif}
 end.

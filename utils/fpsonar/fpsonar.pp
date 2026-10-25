@@ -27,7 +27,7 @@ uses
   FpSonar.Config,
   FpSonar.RuleFramework,
   FpSonar.Baseline,
-  FpSonar.CLI.QualityGate,
+  FpSonar.NamespaceMap,
   FpSonar.Output.Text,
   FpSonar.Output.Sarif,
   FpSonar.Output.SonarJson,
@@ -39,7 +39,11 @@ uses
   FpSonar.Rules.Exceptions,
   FpSonar.Rules.Casts,
   FpSonar.Rules.Calls,
+  FpSonar.Rules.Concurrency,
+  FpSonar.Rules.CondComp,
   FpSonar.Rules.Control,
+  FpSonar.Rules.Eval,
+  FpSonar.Rules.Generics,
   FpSonar.Rules.Imports,
   FpSonar.Rules.Refs,
   FpSonar.Rules.SemNaming,
@@ -47,6 +51,10 @@ uses
   FpSonar.Rules.Trackers,
   FpSonar.Rules.Parens,
   FpSonar.Rules.Forms,
+  FpSonar.Rules.FpcStyle,
+  FpSonar.Rules.Lifetime,
+  FpSonar.Rules.Strings,
+  FpSonar.Rules.DataFlow,
   FpSonar.Consts;
 
 type
@@ -114,9 +122,10 @@ type
   var
     LOpts: TFpSonarCliOptions;
     LParamError: string;
+    LMapError: string;
   begin
     Result := False;
-    LOpts := ParseOptions(CollectArgs);
+    LOpts := TFpSonarCliOptions.Parse(CollectArgs);
     // Usage error: report to stderr and exit 2 (NOT the quality-gate code).
     if LOpts.HadError then
     begin
@@ -136,12 +145,21 @@ type
     end;
 
     // Fail fast on a bad per-rule param
-    if not ValidateConfigParams(LOpts.RuleConfig, RuleRegistry, LParamError) then
+    if not RuleRegistry.ValidateConfig(LOpts.RuleConfig, LParamError) then
     begin
       Writeln(StdErr, Format(SCliError, [LParamError]));
       ExitCode := 2;
       Exit;
     end;
+
+    if LOpts.NamespaceMapFile <> '' then
+      if not LoadNamespaceMap(LOpts.NamespaceMapFile, LMapError) then
+      begin
+        Writeln(StdErr, Format(SCliError, [LMapError]));
+        Writeln(StdErr, STryHelp);
+        ExitCode := 2;
+        Exit;
+      end;
     aOpts := LOpts;
     Result := True;
   end;
@@ -174,12 +192,11 @@ type
       if FOpts.HasProjectDiag then
         Writeln(StdErr, Format(SProjectLoadNote, [FOpts.ProjectDiag.Message]));
 
-      LEffective := ApplyRuleConfig(LCollector.Issues, FOpts.RuleConfig);
+      LEffective := FOpts.RuleConfig.ApplyTo(LCollector.Issues);
 
       if (FOpts.Command = 'analyze') and FOpts.MutedMode then
       begin
-        if not LoadBaselineFromFile(FOpts.MutedBaselineFile, LBaseline,
-          LBaselineErr) then
+        if not LBaseline.LoadFromFile(FOpts.MutedBaselineFile, LBaselineErr) then
         begin
           Writeln(StdErr, Format(SCliError, [LBaselineErr]));
           ExitCode := 2;
@@ -195,7 +212,7 @@ type
       if FOpts.Command = 'baseline' then
       begin
         // Snapshot generation:
-        LReport := BaselineToJSON(MakeBaseline(LEffective));
+        LReport := TFpSonarBaseline.FromIssues(LEffective).ToJSON;
         if FOpts.OutputFile = '' then
           Writeln(LReport)
         else if not WriteReportFile(FOpts.OutputFile, LReport + LineEnding) then
@@ -206,13 +223,13 @@ type
         // Basic run
         if FOpts.NewCodeMode then
         begin
-          if not LoadBaselineFromFile(FOpts.BaselineFile, LBaseline, LBaselineErr) then
+          if not LBaseline.LoadFromFile(FOpts.BaselineFile, LBaselineErr) then
           begin
             Writeln(StdErr, Format(SCliError, [LBaselineErr]));
             ExitCode := 2;
           end
           else
-            LEffective := FilterNewCode(LEffective, LBaseline);
+            LEffective := LBaseline.FilterNewCode(LEffective);
         end;
 
         if ExitCode <> 2 then
@@ -233,9 +250,9 @@ type
 
           // Evaluate the quality gate.
           if FOpts.MutedMode then
-            LGate := EvaluateGate(ActiveIssues(LEffective), FOpts.RuleConfig.Gate)
+            LGate := FOpts.RuleConfig.Gate.Evaluate(ActiveIssues(LEffective))
           else
-            LGate := EvaluateGate(LEffective, FOpts.RuleConfig.Gate);
+            LGate := FOpts.RuleConfig.Gate.Evaluate(LEffective);
           if LGate.Failed then
             Writeln(StdErr, Format(SGateFailedNote, [LGate.Reason]));
         end;
@@ -261,7 +278,7 @@ type
     SetLength(lRules, RuleRegistry.Count);
     for i := 0 to RuleRegistry.Count - 1 do
       lRules[i] := RuleRegistry.Rule(i).Metadata;
-    lReport := ConfigTemplateToJSON(DefaultConfig, lRules);
+    lReport := TFpSonarConfig.Default.TemplateToJSON(lRules);
     if FOpts.OutputFile = '' then
       Writeln(lReport)
     else if not WriteReportFile(FOpts.OutputFile, lReport + LineEnding) then

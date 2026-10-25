@@ -32,14 +32,42 @@ uses
   Markdown.InlineText,
   Markdown.HtmlEntities;
 
+resourcestring
+  SErrDuplicateID = 'Duplicate id "%s"';
+  SErrDuplicateFootnote = 'Duplicate footnote label "%s"';
+  SErrUndefinedFootnote = 'Footnote "%s" is not defined';
+  SWarnUnusedFootnote = 'Footnote "%s" is not referenced';
+  SWarnAutoIDClash = 'Automatic id "%s" is also an explicit id, using "%s"';
+  SWarnDuplicateLinkRef = 'Duplicate link reference definition "%s"';
+
 type
   EMarkdown = class(Exception);
   // Forward definition
   TMarkdownParser = class;
 
   // Options
-  TMarkdownOption = (mdoGithubFlavoured);
+  TMarkdownOption = (
+    mdoGithubFlavoured,  // GitHub flavoured markdown: strikethrough, autolinks
+    mdoComments,         // HTML comment blocks, inline comments and markers
+    mdoAttributes,       // {#id .class key=value} attribute blocks, explicit heading ids
+    mdoHeadingIds,       // automatic heading ids
+    mdoDefinitionLists,  // definition lists
+    mdoAlerts,           // > [!NOTE] alerts
+    mdoFootnotes,        // footnote references and definitions
+    mdoCaptions,         // Table: captions and implicit figures
+    mdoLinkReferences    // link reference definitions and reference links
+  );
   TMarkdownOptions = set of TMarkdownOption;
+
+  TMarkdownMessageLevel = (mlInfo, mlWarning, mlError);
+  TMarkdownMessageEvent = procedure(Sender : TObject; aLevel : TMarkdownMessageLevel; aLine : Integer; const aMessage : String) of object;
+
+const
+  // All extensions used for documentation
+  MarkdownDocExtensions = [mdoGithubFlavoured, mdoComments, mdoAttributes, mdoHeadingIds, mdoDefinitionLists,
+                           mdoAlerts, mdoFootnotes, mdoCaptions, mdoLinkReferences];
+
+type
 
   // Parent block context
   TMarkdownBlockProcessingContext = (bpGeneral, bpCodeBlock, bpFencedCodeBlock);
@@ -56,6 +84,12 @@ type
     function NextLine : TMarkdownLine;
     function Done : Boolean;
     procedure RedoLine(aResetLine: Boolean);
+    // Take off the prefix that this processor's block puts in front of its content lines.
+    // Returns False when the line does not jave it, and so leaves the block.
+    function StripLinePrefix(aLine : TMarkdownLine) : Boolean; virtual;
+    // Same, for the enclosing block, when a line is consumed outside the parse loop.
+    // Returns True when the line no longer belongs to that block.
+    function ParentEndsLine(aLine : TMarkdownLine) : Boolean;
     function InList(aBlock : TMarkdownBlock; ordered : boolean; const marker : String; indent : integer; grace : integer; out list : TMarkdownListBlock) : boolean;
     function IsBlock(aBlock : TMarkdownBlock; blocks : TMarkdownBlockList; const aLine : String; wsLen : integer = 3) : boolean;
     function CurrentLine : TMarkdownLine;
@@ -104,6 +138,9 @@ type
 
   TMarkdownParser = class(TComponent)
   private
+    FDocument: TMarkdownDocument;
+    FFileName: String;
+    FOnMessage: TMarkdownMessageEvent;
     FLazy: Boolean;
     FLines : TMarkdownLineList;
     FCurrentLine : integer;
@@ -156,7 +193,12 @@ type
     function CreateDocument(aLine: integer): TMarkdownDocument; virtual;
     // To customize top-level document bloc k parser, override this.
     function CreateDocumentProcessor: TMarkdownDocumentProcessor; virtual;
+    // Run all registered transforms on aDocument
+    procedure ApplyTransforms(aDocument : TMarkdownDocument); virtual;
   public
+    class var
+      // Inline text processor to use. Assign to install an add-on such as emoji shortcodes.
+      DefaultInlineTextProcessorClass : TInlineTextProcessorClass;
     Constructor Create(aOwner : TComponent); override;
     Destructor Destroy; override;
     // Utility function to handle parsing of inline text.
@@ -171,8 +213,18 @@ type
     class function FastParse(aSource: TStrings; aOptions: TMarkdownOptions): TMarkdownDocument;
     // Helper to quickly parse a stringlist into a markdown document
     class function FastParseFile(const aFileName : string; aOptions: TMarkdownOptions = []): TMarkdownDocument;
+    // Report a problem through OnMessage
+    procedure DoMessage(aLevel : TMarkdownMessageLevel; aLine : Integer; const aMessage : String);
+    // Report a problem through OnMessage, formatting aFmt with aArgs
+    procedure DoMessageFmt(aLevel : TMarkdownMessageLevel; aLine : Integer; const aFmt : String; const aArgs : Array of const);
+    // Register aTarget under aID in the document being parsed. A duplicate id is reported and returns False.
+    function RegisterAnchor(const aID : String; aTarget : TMarkdownElement; aLine : Integer) : Boolean;
+    // Inline processing of aText, which starts on line aLine. The caller owns the result.
+    function ParseInlineText(const aText : String; aLine : Integer) : TMarkdownTextNodeList;
     // State control in lazy continuation .
     property Lazy : Boolean Read FLazy Write FLazy;
+    // The document being parsed
+    property Document : TMarkdownDocument Read FDocument;
     // HTML entities to convert
     Property Entities : TFPStringHashTable read FEntities;
     // Registered block processors (read-only, parser-owned).
@@ -180,6 +232,49 @@ type
   published
     // Options
     Property Options : TMarkdownOptions Read FOptions Write FOptions;
+    // Source file name, copied to the document. Set by ParseFile.
+    Property FileName : String Read FFileName Write FFileName;
+    // Called for problems that do not stop the parse, such as duplicate ids.
+    Property OnMessage : TMarkdownMessageEvent Read FOnMessage Write FOnMessage;
+  end;
+
+  { TMarkdownTransform }
+
+  TMarkdownTransform = class abstract (TObject)
+  private
+    FParser : TMarkdownParser;
+  public
+    constructor Create(aParser : TMarkdownParser); virtual;
+    // Register as transform aName. Transforms run in registration order.
+    class procedure Register(const aName : String);
+    // Transform the parsed document
+    procedure Apply(aDocument : TMarkdownDocument); virtual; abstract;
+    // The parser that produced the document
+    property Parser : TMarkdownParser read FParser;
+  end;
+  TMarkdownTransformClass = class of TMarkdownTransform;
+  TMarkdownTransformClassArray = array of TMarkdownTransformClass;
+
+  { TMarkdownTransformFactory }
+
+  TMarkdownTransformFactory = class(TObject)
+  private
+    class var _instance : TMarkdownTransformFactory;
+  private
+    FNames : TStringList;
+  public
+    constructor Create;
+    destructor Destroy; override;
+    class constructor init;
+    class destructor done;
+    // All registered transforms, in registration order
+    function All : TMarkdownTransformClassArray;
+    // Register aTransform as aName. An existing registration with that name is replaced in place.
+    procedure RegisterTransform(const aName : String; aTransform : TMarkdownTransformClass);
+    // Find the transform registered as aName
+    function FindTransform(const aName : String) : TMarkdownTransformClass;
+    // Singleton instance
+    class property Instance : TMarkdownTransformFactory Read _instance;
   end;
 
   { TMarkdownProcessorFactory }
@@ -319,6 +414,27 @@ begin
   Result:=FParser.ParentProcessor;
 end;
 
+
+function TMarkdownBlockProcessor.StripLinePrefix(aLine: TMarkdownLine): Boolean;
+
+begin
+  if aLine=Nil then ; // Silence warning
+  Result:=True;
+end;
+
+
+function TMarkdownBlockProcessor.ParentEndsLine(aLine: TMarkdownLine): Boolean;
+
+var
+  lProcessor : TMarkdownBlockProcessor;
+
+begin
+  Result:=False;
+  lProcessor:=ParentProcessor;
+  if Assigned(lProcessor) and (lProcessor<>Self) then
+    Result:=Not lProcessor.StripLinePrefix(aLine);
+end;
+
 { TMarkdownDocumentProcessor }
 
 function TMarkdownDocumentProcessor.processLine(aParent : TMarkdownContainerBlock; aLine: TMarkdownLine; aContext : TMarkdownBlockProcessingContext): Boolean;
@@ -435,11 +551,15 @@ begin
     ConvertLines(aSource);
     lProc:=CreateDocumentProcessor;
     Result:=CreateDocument(1);
+    Result.FileName:=FFileName;
+    FDocument:=Result;
     parse(Result,lProc);
     processInlines(Result, wsTrim);
+    ApplyTransforms(Result);
     lDone:=True;
     Result.closed:=True;
   finally
+    FDocument:=Nil;
     DoneProcessors;
     if not lDone then
       Result.Free;
@@ -454,10 +574,61 @@ begin
   lFile:=TStringList.Create;
   try
     lFile.LoadFromFile(aFileName,TEncoding.UTF8);
+    FFileName:=aFileName;
     Result:=Parse(lFile);
   finally
     lFile.Free;
   end;
+end;
+
+
+procedure TMarkdownParser.DoMessage(aLevel: TMarkdownMessageLevel; aLine: Integer; const aMessage: String);
+
+begin
+  if Assigned(FOnMessage) then
+    FOnMessage(Self,aLevel,aLine,aMessage);
+end;
+
+
+procedure TMarkdownParser.DoMessageFmt(aLevel: TMarkdownMessageLevel; aLine: Integer; const aFmt: String; const aArgs: array of const);
+
+begin
+  DoMessage(aLevel,aLine,Format(aFmt,aArgs));
+end;
+
+
+function TMarkdownParser.RegisterAnchor(const aID: String; aTarget: TMarkdownElement; aLine: Integer): Boolean;
+
+begin
+  Result:=Assigned(FDocument) and FDocument.AddAnchor(aID,aTarget);
+  if not Result and Assigned(FDocument) then
+    DoMessageFmt(mlError,aLine,SErrDuplicateID,[aID]);
+end;
+
+
+function TMarkdownParser.ParseInlineText(const aText: String; aLine: Integer): TMarkdownTextNodeList;
+
+begin
+  Result:=ProcessText(aText,wsTrim,aLine);
+end;
+
+
+procedure TMarkdownParser.ApplyTransforms(aDocument: TMarkdownDocument);
+
+var
+  lClass : TMarkdownTransformClass;
+  lTransform : TMarkdownTransform;
+
+begin
+  for lClass in TMarkdownTransformFactory.Instance.All do
+    begin
+    lTransform:=lClass.Create(Self);
+    try
+      lTransform.Apply(aDocument);
+    finally
+      lTransform.Free;
+    end;
+    end;
 end;
 
 
@@ -521,6 +692,9 @@ begin
               and not lList.closed;
     if Result then
       aList:=lList;
+    // A list does not continue outside the container holding it
+    if not ((lBlock is TMarkdownListBlock) or (lBlock is TMarkdownListItemBlock)) then
+      Break;
     lBlock:=lBlock.Parent;
     end;
 end;
@@ -691,6 +865,10 @@ begin
     lClass:=GetInlineTextProcessorClass;
     Processor:= LClass.Create(Scanner,Result,FEntities,wsMode);
     Processor.GFMExtensions:=mdoGithubFlavoured in Options;
+    Processor.Comments:=mdoComments in Options;
+    Processor.Footnotes:=mdoFootnotes in Options;
+    if mdoLinkReferences in Options then
+      Processor.LinkReferences:=FDocument;
     Processor.process(true);
   finally
     Scanner.Free;
@@ -754,7 +932,9 @@ end;
 function TMarkdownParser.GetInlineTextProcessorClass: TInlineTextProcessorClass;
 
 begin
-  Result:=TInlineTextProcessor;
+  Result:=DefaultInlineTextProcessorClass;
+  if Result=Nil then
+    Result:=TInlineTextProcessor;
 end;
 
 
@@ -856,6 +1036,92 @@ constructor TMarkdownProcessorFactory.TRegisteredProcessor.create(const aName: S
 begin
   Name:=aName;
   Processor:=aProcessor;
+end;
+
+{ TMarkdownTransform }
+
+constructor TMarkdownTransform.Create(aParser: TMarkdownParser);
+
+begin
+  inherited Create;
+  FParser:=aParser;
+end;
+
+
+class procedure TMarkdownTransform.Register(const aName: String);
+
+begin
+  TMarkdownTransformFactory.Instance.RegisterTransform(aName,Self);
+end;
+
+{ TMarkdownTransformFactory }
+
+constructor TMarkdownTransformFactory.Create;
+
+begin
+  FNames:=TStringList.Create;
+end;
+
+
+destructor TMarkdownTransformFactory.Destroy;
+
+begin
+  FreeAndNil(FNames);
+  inherited Destroy;
+end;
+
+
+class constructor TMarkdownTransformFactory.init;
+
+begin
+  _instance:=TMarkdownTransformFactory.Create;
+end;
+
+
+class destructor TMarkdownTransformFactory.done;
+
+begin
+  FreeAndNil(_instance);
+end;
+
+
+function TMarkdownTransformFactory.All: TMarkdownTransformClassArray;
+
+var
+  I : Integer;
+
+begin
+  Result:=[];
+  SetLength(Result,FNames.Count);
+  for I:=0 to FNames.Count-1 do
+    Result[I]:=TMarkdownTransformClass(FNames.Objects[I]);
+end;
+
+
+procedure TMarkdownTransformFactory.RegisterTransform(const aName: String; aTransform: TMarkdownTransformClass);
+
+var
+  lIdx : Integer;
+
+begin
+  lIdx:=FNames.IndexOf(LowerCase(aName));
+  if lIdx<0 then
+    FNames.AddObject(LowerCase(aName),TObject(aTransform))
+  else
+    FNames.Objects[lIdx]:=TObject(aTransform);
+end;
+
+
+function TMarkdownTransformFactory.FindTransform(const aName: String): TMarkdownTransformClass;
+
+var
+  lIdx : Integer;
+
+begin
+  Result:=Nil;
+  lIdx:=FNames.IndexOf(LowerCase(aName));
+  if lIdx>=0 then
+    Result:=TMarkdownTransformClass(FNames.Objects[lIdx]);
 end;
 
 

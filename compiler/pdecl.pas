@@ -56,7 +56,7 @@ implementation
     uses
        SysUtils,
        { common }
-       cutils,
+       cdynset,cutils,
        { global }
        globals,tokens,verbose,widestr,constexp,
        systems,aasmdata,fmodule,compinnr,
@@ -88,7 +88,7 @@ implementation
       var
         hp : tconstsym;
         p : tnode;
-        ps : pconstset;
+        ps : pointer;
         pd : pbestreal;
         pg : pguid;
         sp : pchar;
@@ -142,11 +142,8 @@ implementation
              end;
            setconstn :
              begin
-               new(ps);
-               if assigned(tsetconstnode(p).value_set) then
-                 ps^:=tsetconstnode(p).value_set^
-               else
-                 ps^:=[];
+               ps:=nil;
+               tdynset(ps):=DynSetCopy(tsetconstnode(p).value_set);
                hp:=cconstsym.create_ptr(orgname,constset,ps,p.resultdef);
              end;
            pointerconstn :

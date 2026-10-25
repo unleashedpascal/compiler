@@ -28,8 +28,10 @@ type
   { Which tier produced a diagnostic }
   TFpSonarDiagnosticKind = (dkParseError,  // parser-level failures
     dkScanError,   // raw scanner failure
-    dkResolveError
+    dkResolveError,
     // resolution failure (EPasResolve) caught by the tolerant resolver wrapper
+    dkFileNotFound
+    // the source file could not be opened (EFileNotFoundError from the resolver)
     );
 
   { A single structural diagnostic }
@@ -83,9 +85,24 @@ type
 
   TFpSonarIssueArray = array of TFpSonarIssue;
 
+  // The result of evaluating a quality gate: whether it failed, the process exit
+  // code (0 pass / 1 fail), and a human reason naming the first exceeded axis.
+  // Produced by TFpSonarGateThresholds.Evaluate (FpSonar.Config).
+  TFpSonarGateOutcome = record
+    Failed: Boolean;
+    ExitCode: Integer;
+    Reason: string;
+  end;
+
+  { The source dialect. dlDefault is the byte-identical FPC path; dlPas2js
+    enables pas2js parse-relevant switches and a .ppu-free, real-source
+    resolution profile. dlDelphi is reserved for a future increment. }
+  TFpSonarDialect = (dlDefault, dlPas2js);
+
   { The config tuple — the single source of truth for an analysis run. }
   TFpSonarAnalysisConfig = record
     Mode: string;                         // compiler mode, e.g. 'OBJFPC'
+    Dialect: TFpSonarDialect;             // source dialect (default dlDefault)
     ModeSwitches: TFpSonarStringArray;    // carried for the resolver (not consumed yet)
     Defines: TFpSonarStringArray;         // user/project -d defines
     UnitSearchPaths: TFpSonarStringArray; // -Fu (carried for the resolver)
@@ -115,8 +132,7 @@ type
     Kind: TRuleParamKind;
     // The rule's built-in default, rendered as text and interpreted per Kind:
     // an integer literal (rpkInt), 'true'/'false' (rpkBool), the string/regex
-    // verbatim (rpkString/rpkRegex), or '' for rpkTargets (an empty
-    // disallow-list). Surfaced verbatim by "fpsonar init-config".
+    // verbatim (rpkString/rpkRegex), or '' for rpkTargets.
     DefaultValue: string;
   end;
 
@@ -140,6 +156,9 @@ type
     MessageKey: string;
     Tags: TRuleTagArray;
     Title: string;
+    // A one-line, human-readable explanation of what the rule checks and why.
+    // Surfaced in the IDE config editor and available to SARIF rules[]/docs.
+    Description: string;
     // The tunable parameters this rule reads from its config 'params' object.
     ParamSpecs: TRuleParamSpecArray;
     // Convenience builder. Tags/Title default empty; MessageKey defaults to
@@ -158,6 +177,9 @@ type
       aDefault: integer); overload;
     procedure AddParam(const aName: string; aKind: TRuleParamKind;
       aDefault: boolean); overload;
+    // Sets Description and returns the (value) metadata, for fluent use at
+    // registration: Make(...).WithDescription('...').
+    function WithDescription(const aDescription: string): TRuleMetadata;
     // The spec for aName in ParamSpecs, or False when the rule declares no such parameter
     function FindParam(const aName: string; out aSpec: TRuleParamSpec): boolean;
     // True iff the metadata is complete: a non-empty RuleId and a non-empty MessageKey
@@ -322,6 +344,7 @@ end;
 class function TFpSonarAnalysisConfig.Default: TFpSonarAnalysisConfig; static;
 begin
   Result.Mode := 'OBJFPC';
+  Result.Dialect := dlDefault;
   SetLength(Result.ModeSwitches, 0);
   SetLength(Result.Defines, 0);
   SetLength(Result.UnitSearchPaths, 0);
@@ -358,6 +381,11 @@ function TFpSonarAnalysisConfig.Merge(
 begin
   // Scalars: a non-empty override wins, else keep base (Self).
   Result.Mode := PickScalar(Mode, aOverride.Mode);
+  // Dialect: a non-default override wins, else keep base.
+  if aOverride.Dialect <> dlDefault then
+    Result.Dialect := aOverride.Dialect
+  else
+    Result.Dialect := Dialect;
   Result.TargetCPU := PickScalar(TargetCPU, aOverride.TargetCPU);
   Result.TargetOS := PickScalar(TargetOS, aOverride.TargetOS);
   // Arrays: append override after base (override ADDS to, never erases, base).
@@ -379,6 +407,9 @@ begin
     ' UnitSearchPaths=' + JoinArray(UnitSearchPaths) +
     ' IncludePaths=' + JoinArray(IncludePaths) +
     ' TargetFiles=' + JoinArray(TargetFiles);
+  // Only surfaced for a non-default dialect, so dlDefault stays byte-identical.
+  if Dialect <> dlDefault then
+    Result := Result + ' Dialect=pas2js';
 end;
 
 
@@ -400,7 +431,15 @@ begin
     Result.MessageKey := 'rule.' + aRuleId + '.message';
   SetLength(Result.Tags, 0);
   Result.Title := '';
+  Result.Description := '';
   SetLength(Result.ParamSpecs, 0);
+end;
+
+
+function TRuleMetadata.WithDescription(const aDescription: string): TRuleMetadata;
+begin
+  Result := Self;
+  Result.Description := aDescription;
 end;
 
 
@@ -593,6 +632,7 @@ end;
 procedure ClearConfig(out aConfig: TFpSonarAnalysisConfig);
 begin
   aConfig.Mode := '';
+  aConfig.Dialect := dlDefault;
   SetLength(aConfig.ModeSwitches, 0);
   SetLength(aConfig.Defines, 0);
   SetLength(aConfig.UnitSearchPaths, 0);
@@ -623,6 +663,20 @@ begin
     Result := ExpandFileName(lPath)
   else
     Result := ExpandFileName(aBaseDir + lPath);
+end;
+
+
+{ Anchors each search-path entry against aBaseDir: a relative '-Fu ../X'
+  resolves relative to the project/.cfg dir, not the process CWD. Entries with
+  an unexpanded macro ('$...') are left untouched. }
+procedure ResolvePathList(const aBaseDir: string;
+  var aList: TFpSonarStringArray);
+var
+  i: integer;
+begin
+  for i := 0 to High(aList) do
+    if (aList[i] <> '') and (Pos('$', aList[i]) = 0) then
+      aList[i] := ResolveAgainst(aBaseDir, aList[i]);
 end;
 
 
@@ -680,6 +734,10 @@ begin
       ChildValue(lOpts.FindNode('SearchPaths'), 'OtherUnitFiles'));
     aConfig.IncludePaths := SplitSearchPath(
       ChildValue(lOpts.FindNode('SearchPaths'), 'IncludeFiles'));
+    // Anchor relative search paths (e.g. '../X') to the project dir, matching
+    // the target-file resolution — otherwise they'd resolve against the CWD.
+    ResolvePathList(aBaseDir, aConfig.UnitSearchPaths);
+    ResolvePathList(aBaseDir, aConfig.IncludePaths);
     lValue := ChildValue(ChildPath(lOpts, ['Parsing', 'SyntaxOptions']),
       'SyntaxMode');
     if lValue <> '' then
@@ -726,7 +784,7 @@ end;
 
 // Parses an fpc.cfg-style text file: recognises -Fu/-Fi/-d/-M directives, one
 // per line; ignores comments (# / ;) and blanks; unknown directives skipped.
-procedure ParseCfgConfig(const aFileName: string;
+procedure ParseCfgConfig(const aFileName, aBaseDir: string;
   var aConfig: TFpSonarAnalysisConfig);
 var
   lLines: TStringList;
@@ -752,6 +810,9 @@ begin
       else if Copy(lLine, 1, 2) = '-d' then
         AddStr(aConfig.Defines, Trim(Copy(lLine, 3, Length(lLine) - 2)));
     end;
+    // Anchor relative -Fu/-Fi paths to the .cfg's dir, like the .lpi/.lpk path.
+    ResolvePathList(aBaseDir, aConfig.UnitSearchPaths);
+    ResolvePathList(aBaseDir, aConfig.IncludePaths);
   finally
     lLines.Free;
   end;
@@ -794,7 +855,7 @@ begin
     end
     else
       // .cfg / fpc.cfg (or any other extension) => text directive parse.
-      ParseCfgConfig(aFileName, aConfig);
+      ParseCfgConfig(aFileName, lBaseDir, aConfig);
 
     Result := True;
   except
@@ -816,5 +877,6 @@ initialization
   // Parse/scan-error catalog seed (reserved RuleIds).
   RegisterMessage('rule.ParseError.message', SParseError);
   RegisterMessage('rule.ScanError.message', SScanError);
+  RegisterMessage('rule.FileNotFound.message', SFileNotFound);
 
 end.

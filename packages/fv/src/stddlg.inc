@@ -1090,15 +1090,17 @@ var
   S : Sw_String;
   K : pointer;
   Value : Sw_integer;
+  WasMouseClick : Boolean;
+  CurFocused : Sw_Integer;
 begin
-  if (Event.What = evMouseDown) and (Event.Double) then
+  WasMouseClick:=false;
+  if (Event.What=evMouseDown) and (Event.Double=false) then
   begin
-    Event.What := evCommand;
-    Event.Command := cmOK;
-    PutEvent(Event);
-    ClearEvent(Event);
-  end
-  else if (Event.What = evKeyDown) and (Event.CharCode='<') then
+    if (State and sfFocused = 0) then
+      WasMouseClick:=true; {Mark mouse click when not in focus}
+    CurFocused:=Focused;
+  end;
+  if (Event.What = evKeyDown) and (Event.CharCode='<') then
   begin
     { select '..' }
       S := '..';
@@ -1107,6 +1109,11 @@ begin
         FocusItem(Value);
   end
   else TSortedListBox.HandleEvent(Event);
+
+  { report first click on already focused item }
+  if WasMouseClick and (CurFocused=Focused)  then
+     if (List^.Count > 0) and (Focused<Range) then
+       Message(Owner, evBroadcast, cmFileFocused, List^.At(Focused));
 end;
 
 procedure TFileList.ReadDirectory(AWildCard: PathStr);
@@ -1531,6 +1538,8 @@ begin
     R.Intersect(P);
     Dec(R.B.Y,1);
     HistoryWindow := InitHistoryWindow(R);
+    if Assigned(Link) then
+      HistoryWindow^.GrowMode := Link^.GrowMode;
     if HistoryWindow <> nil then
     begin
       C := Owner^.ExecView(HistoryWindow);
@@ -1624,31 +1633,28 @@ begin
   Options := Options or ofCentered;
   WildCard := AWildCard;
 
-  R.Assign(4,11,34,12);
+  R.Assign(3,3,31,4);
+  FileName := New(PFileInputLine, Init(R, 79));
+  FileName^.GrowMode:=gfGrowHiX;
+  Insert(FileName);
+  R.Assign(2,2,3+CStrLen(InputName),3);
+  Control := New(PLabel, Init(R, InputName, FileName));
+  Insert(Control);
+  R.Assign(31,3,34,4);
+  FileHistory := New(PFileHistory, Init(R, FileName, HistoryId));
+  FileHistory^.GrowMode:=gfGrowHiX or gfGrowLoX;
+  Insert(FileHistory);
+
+  R.Assign(3,14,34,15);
   Control := New(PScrollBar, Init(R));
   Insert(Control);
-  R.Assign(4,3,34,11);
+  R.Assign(3,6,34,14);
   FileList := New(PFileList, Init(R, PScrollBar(Control)));
   FileList^.GrowMode:=gfGrowHiX or gfGrowHiY;
   Insert(FileList);
-  R.Assign(3,2,8,3);
+  R.Assign(2,5,8,6);
   Control := New(PLabel, Init(R, slFiles, FileList));
   Insert(Control);
-
-  R.Assign(4+CStrLen(InputName), 13, 31, 14);
-  FileName := New(PFileInputLine, Init(R, 79));
-  FileName^.GrowMode := gfGrowHiX or gfGrowLoY or gfGrowHiY;
-  FileName^.Data Sw_PString_DeRef := WildCard;
-  Insert(FileName);
-
-  R.Assign(2,13,3+CStrLen(InputName),14);
-  Control := New(PLabel, Init(R, InputName, FileName));
-  Control^.GrowMode := gfGrowLoY or gfGrowHiY;
-  Insert(Control);
-  R.Assign(31,13,34,14);
-  FileHistory := New(PFileHistory, Init(R, FileName, HistoryId));
-  FileHistory^.GrowMode := gfGrowHiX or gfGrowLoX or gfGrowLoY or gfGrowHiY;
-  Insert(FileHistory);
 
   R.Assign(35,3,46,5);
   Opt := bfDefault;
@@ -1702,6 +1708,7 @@ begin
   SelectNext(False);
 
   if AOptions and fdNoLoadDir = 0 then ReadDirectory;
+  FileName^.Data Sw_PString_DeRef := WildCard;
 end;
 
 constructor TFileDialog.Load(var S: TStream);
@@ -1834,7 +1841,7 @@ begin
   if (Sw_String(Rec) <> '') and (IsWild(TWildStr(Sw_String(Rec)))) then
   begin
     Valid(cmFileInit);
-    FileList^.Select;
+    FileName^.Select;
   end;
 end;
 

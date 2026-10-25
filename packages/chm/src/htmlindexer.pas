@@ -148,7 +148,10 @@ Function CompareProcObj(Node1, Node2: Pointer): integer;
 var n1,n2 : TIndexedWord;
 begin
   n1:=TIndexedWord(Node1); n2:=TIndexedWord(Node2);
-  Result := CompareText(n1.theword, n2.theword);
+  // The words are lowercased as they are added and a reader looks them up
+  // by comparing the stored bytes, so they have to be ordered the same way:
+  // CompareText uppercases first, which sorts '_' after the letters.
+  Result := CompareStr(n1.theword, n2.theword);
   if Result = 0 then
   begin
     Result := ord(n2.IsTitle)-ord(n1.IsTitle);
@@ -211,9 +214,13 @@ begin
   if FInBody then begin
     if NoCaseTag = '</BODY>' then FInBody := False
     else if copy(NoCaseTag,1,7) = '<SCRIPT' then FInScript:= True
-    else if copy(NoCaseTag,1,8) = '</SCRIPT' then FInScript:= False
+    // The parser only looks for the next '>' to end a tag, so a '<' inside
+    // the script, as in "for (i = 0; i < n; i++)", makes it run past
+    // the real </script> and hand it to us in the middle of a bogus tag.
+    // Accept it there too, or everything below the script is left out.
+    else if Pos('</SCRIPT', NoCaseTag) > 0 then FInScript:= False
     else if copy(NoCaseTag,1,6) = '<STYLE' then FInStyle:= True          // style in body is not WhatWG but is HTML5.2 ?
-    else if copy(NoCaseTag,1,7) = '</STYLE' then FInStyle:= False
+    else if Pos('</STYLE', NoCaseTag) > 0 then FInStyle:= False
 
   end
   else begin
@@ -246,9 +253,18 @@ var
   IsNumberWord: Boolean;
   function IsEndOfWord: Boolean;
   begin
-    Result := not (WordPtr^ in ['a'..'z', '0'..'9', #01, #$DE, #$FE]);
+    Result := not (WordPtr^ in ['a'..'z', '0'..'9', '_', #01, #$DE, #$FE]);
     if  Result and IsNumberWord then
-      Result :=  Result and (WordPtr[0] <> '.');
+      begin
+        // A word starting with a digit goes on over a thousands separator,
+        // which is then dropped from it, and over a decimal point, but only
+        // when a digit follows it: this is what the Microsoft compiler does,
+        // so "1,000" is one word and "7." is just "7".
+        if WordPtr[0] = ',' then
+          Result := False
+        else if (WordPtr[0] = '.') and (WordPtr[1] in ['0'..'9']) then
+          Result := False;
+      end;
     if Result and InWord then
       Result := Result and (WordPtr[0] <> '''');
   ;
@@ -257,10 +273,37 @@ var
     WordIndex: TIndexedWord;
     WordName: AnsiString;
     FPos: Integer;
+    i, j: Integer;
 begin
   if IsTitle then
     FDocTitle := Words;
   Words := LowerCase(Words);
+
+  // A character entity separates words but is not one itself: otherwise the
+  // digits of a numeric one are indexed as a word of their own, which shifts
+  // the position of every word following it in the document.
+  i := 1;
+  while i <= Length(Words) do
+    begin
+      if Words[i] = '&' then
+        begin
+          j := i + 1;
+          while (j <= Length(Words)) and (j - i <= 10)
+                and not (Words[j] in [';', ' ', '&']) do
+            Inc(j);
+          if (j <= Length(Words)) and (Words[j] = ';') then
+            begin
+              while i <= j do
+                begin
+                  Words[i] := ' ';
+                  Inc(i);
+                end;
+              Continue;
+            end;
+        end;
+      Inc(i);
+    end;
+
   WordStart := PAnsiChar(Words);
   WordPtr := WordStart;
   IsNumberWord := False;
@@ -275,12 +318,17 @@ begin
         Delete(WordName, FPos, 1);
         FPos := Pos('''', WordName);
       end;
+      FPos := Pos(',', WordName);
+      while FPos > 0 do
+      begin
+        Delete(WordName, FPos, 1);
+        FPos := Pos(',', WordName);
+      end;
       WordIndex := addgetword(wordname,istitle);
       InWord := False;
       IsNumberWord := False;
       WordIndex.DocumentTopic[FTopicIndex].AddWordIndex(FWordCount);
-      //if not IsTitle then
-        Inc(FWordCount);
+      Inc(FWordCount);
 
     end
     else if not InWord and not IsEndOfWord then
@@ -303,8 +351,7 @@ begin
     //if IsNumberWord then WriteLn('Following is NUMBER WORD: "', (WordStart[0]),'"'); ;
     IsNumberWord := False;
     //WriteLn(FWordCount, ' "', WordName,'"');
-    if not IsTitle then
-      Inc(FWordCount);
+    Inc(FWordCount);
   end;
 end;
 
@@ -349,6 +396,8 @@ var
 begin
   FInBody := False;
   FInTitle:= False;
+  FInScript := False;
+  FInStyle := False;
   FIndexTitlesOnly := AIndexOnlyTitles;
   FWordCount := 0;
   FTopicIndex := ATOPICIndex;
@@ -369,6 +418,8 @@ begin
   FDocTitle := '';
   FInBody := False;
   FInTitle:= False;
+  FInScript := False;
+  FInStyle := False;
   FWordCount := 0;
   FTopicIndex := -1;
 

@@ -100,6 +100,8 @@ begin
           AddInclude('flt_conv.inc');
           AddInclude('flt_core.inc');
           AddInclude('flt_pack.inc');
+          AddInclude('flt_exact.inc');
+          AddInclude('flt_pow10.inc');
           AddInclude('systhrd.inc',AllWindowsOSes+[Netware,Netwlibc,EMX,OS2]);
           // Unix implementations
           AddInclude('osdefs.inc',AllUnixOSes);
@@ -209,18 +211,9 @@ begin
           AddInclude('sysnr.inc');
           AddInclude('syscallh.inc');
         end;
-    T:=P.Targets.AddUnit('unix/terminfo.pp',AllUnixOSes);
-      T.Dependencies.AddUnit('baseunix',AllUnixOSes);
     T:=P.Targets.AddUnit('unix/dl.pp',AllUnixOSes);
       T.Dependencies.AddUnit('system');
-    T:=P.Targets.AddUnit('unix/ipc.pp',AllUnixOSes - [Android]);
-      With T.Dependencies do
-        begin
-          AddUnit('baseunix');
-          AddUnit('syscall',[Linux,Beos,FreeBSD]);
-          AddInclude('ipccall.inc',[Linux]);
-          AddInclude('ipcbsd.inc',[FreeBSD]);
-        end;
+      T.Dependencies.AddUnit('ctypes');
 
     // Linux units
     T:=P.Targets.AddUnit('si_c21g.pp',[i386],[Linux]);
@@ -276,14 +269,6 @@ begin
         begin
           AddUnit('baseunix');
           AddUnit('syscall');
-        end;
-    T:=P.Targets.AddUnit('gpm.pp',[Linux]);
-      With T.Dependencies do
-        begin
-          AddUnit('termio');
-          AddUnit('sockets');
-          AddUnit('strings');
-          AddUnit('unix');
         end;
     T:=P.Targets.AddUnit('linuxvcs.pp',[Linux]);
       with T.Dependencies do
@@ -418,6 +403,7 @@ begin
           AddUnit('wasiapi', [wasip1]);
           AddUnit('wasiutil', [wasip1]);
           AddUnit('sysconst', [wasip1]);
+          AddUnit('linux', [linux]);
           AddInclude('sysutilh.inc');
           AddInclude('sysinth.inc');
           AddInclude('osutilsh.inc');
@@ -541,6 +527,7 @@ begin
           AddUnit('initc');
           AddUnit('unix');
           AddUnit('ctypes');
+          AddUnit('dynlibs');
         end;
 
     // Misc units
@@ -578,7 +565,7 @@ begin
         begin
           AddUnit('system');
         end;
-    T:=P.Targets.AddUnit('dynlibs.pas', AllWindowsOSes - AllWebAssemblyOSes);
+    T:=P.Targets.AddUnit('dynlibs.pas', AllOSes - AllWebAssemblyOSes);
       With T.Dependencies do
         begin
           AddUnit('objpas');
@@ -594,7 +581,7 @@ begin
         end;
 
     T:=P.Targets.AddUnit('unicodedata.pas');
-
+    T:=P.Targets.AddUnit('unix/unixcp.pp', AllUnixOSes);
     T:=P.Targets.AddUnit('fpwidestring.pp');
       with T.Dependencies do
         begin
@@ -877,7 +864,7 @@ begin
         end;
 
     // Debugging units
-    T:=P.Targets.AddUnit('exeinfo.pp', AllWindowsOSes - AllWebAssemblyOSes);
+    T:=P.Targets.AddUnit('exeinfo.pp', AllOSes - AllWebAssemblyOSes);
       with T.Dependencies do
         begin
           AddUnit('objpas');
@@ -888,12 +875,12 @@ begin
         begin
           AddUnit('system');
         end;
-    T:=P.Targets.AddUnit('lineinfo.pp', AllWindowsOSes - AllWebAssemblyOSes);
+    T:=P.Targets.AddUnit('lineinfo.pp', AllOSes - AllWebAssemblyOSes);
       with T.Dependencies do
         begin
           AddUnit('exeinfo');
         end;
-    T:=P.Targets.AddUnit('lnfodwrf.pp', AllWindowsOSes - AllWebAssemblyOSes);
+    T:=P.Targets.AddUnit('lnfodwrf.pp', AllOSes - AllWebAssemblyOSes);
       with T.Dependencies do
         begin
           AddUnit('exeinfo');

@@ -931,8 +931,11 @@ End;
 {$ifndef FPC_SYSTEM_HAS_STACKTOP}
 function StackTop: pointer;
 begin
+  { No upper stack bound in a library }
+  if IsLibrary then
+    result:=pointer(ptruint(high(ptruint)))
   { Avoid wrap to zero on 32-bit }
-  if ptruint(StackBottom) > high(ptruint) - StackLength then
+  else if ptruint(StackBottom) > high(ptruint) - StackLength then
     result:=pointer(ptruint(high(ptruint)))
   else
     result:=StackBottom + StackLength;
@@ -1383,9 +1386,54 @@ end;
 
 
 {$ifndef FPC_SYSTEM_HAS_BACKTRACESTR}
+{$ifdef FPC_HAS_FEATURE_DYNLIBS}
+// Returns aValue as hexadecimal digits without leading zeroes
+function BackTraceHexStr(aValue: CodePtrUInt): ShortString; {$ifdef SYSTEMINLINE}inline;{$endif}
+var
+  lDigits : CodePtrUInt;
+begin
+  // The number of hexadecimal digits in X is 1 + BSR(X or 1) div 4.
+  // The generic formula is 1 + floor(log(X, radix)); “or 1” handles the case X = 0.
+  {$if not defined(VER3_2)} 
+  // Bsr() overload is only available as of 3.3.1
+  lDigits:=Bsr(aValue or 1);
+  {$elseif sizeof(aValue) >= sizeof(qword)} 
+  lDigits:=BsrQWord(aValue or 1);
+  {$else} 
+  lDigits:=BsrDWord(aValue or 1);
+  {$endif} 
+  lDigits:=1 + lDigits div 4;
+  BackTraceHexStr:=HexStr(aValue,lDigits);
+end;
+
+
+// Returns '  symbol+$offset  (module+$offset)' for Addr from the dynamic library manager, or an empty string
+function BackTraceSymbolStr(Addr: CodePointer): ShortString;
+var
+  lInfo: TSymbolAddressInfo;
+  i: SizeInt;
+begin
+  BackTraceSymbolStr:='';
+  if not GetSymbolByAddress(Addr,lInfo) then
+    exit;
+  if lInfo.SymbolName<>'' then
+    BackTraceSymbolStr:='  '+lInfo.SymbolName+'+$'+BackTraceHexStr(CodePtrUInt(Addr)-CodePtrUInt(lInfo.SymbolAddr));
+  i:=Length(lInfo.ModuleName);
+  while (i>0) and not (lInfo.ModuleName[i] in ['/','\']) do
+    dec(i);
+  if Length(lInfo.ModuleName)>i then
+    BackTraceSymbolStr:=BackTraceSymbolStr+'  ('+Copy(lInfo.ModuleName,i+1,Length(lInfo.ModuleName))+
+      '+$'+BackTraceHexStr(lInfo.ModuleOffset)+')';
+end;
+{$endif FPC_HAS_FEATURE_DYNLIBS}
+
+
 function SysBackTraceStr (Addr: CodePointer): ShortString;
 begin
   SysBackTraceStr:='  $'+hexstr(addr);
+{$ifdef FPC_HAS_FEATURE_DYNLIBS}
+  SysBackTraceStr:=SysBackTraceStr+BackTraceSymbolStr(Addr);
+{$endif FPC_HAS_FEATURE_DYNLIBS}
 end;
 {$endif FPC_SYSTEM_HAS_BACKTRACESTR}
 
@@ -1495,6 +1543,7 @@ begin
 end;
 
 
+{$ifdef FPC_HAS_FEATURE_TEXTIO}
 Procedure dump_stack(var f : text;fp : Pointer; addr : CodePointer);
 var
   i : ObjpasInt;
@@ -1569,7 +1618,7 @@ begin
     WriteLn(f,BackTraceStrFunc(Frames[FrameNumber]));
 end;
 {$endif FPC_HAS_FEATURE_EXCEPTIONS}
-
+{$endif FPC_HAS_FEATURE_TEXTIO}
 
 {$ifdef FPC_HAS_FEATURE_HEAP}
 Type
@@ -2011,7 +2060,7 @@ end;
 {$endif FPC_HAS_FEATURE_FILEIO}
 
 { OS dependent low level file functions }
-{$ifdef FPC_HAS_FEATURE_FILEIO}
+{$if defined(FPC_HAS_FEATURE_FILEIO) or defined(FPC_HAS_FEATURE_TEXTIO)}
 {$i sysfile.inc}
 
 {$ifndef FPCRTL_FILESYSTEM_SINGLE_BYTE_API}
@@ -2052,6 +2101,9 @@ end;
 {$endif not FPCRTL_FILESYSTEM_SINGLE_BYTE_API}
 
 
+{$ifdef FPC_HAS_FEATURE_WIDESTRINGS}
+{$ifdef FPC_HAS_FEATURE_ANSISTRINGS}
+
 {$ifndef FPCRTL_FILESYSTEM_TWO_BYTE_API}
 {$ifndef FPC_ANSI_TEXTFILEREC}
 procedure do_open(var f; p: pwidechar; flags: longint; pchangeable: boolean);
@@ -2089,6 +2141,9 @@ end;
 {$endif not FPC_ANSI_TEXTFILEREC}
 {$endif not FPCRTL_FILESYSTEM_TWO_BYTE_API}
 
+{$endif FPC_HAS_FEATURE_ANSISTRINGS}
+{$endif FPC_HAS_FEATURE_WIDESTRINGS}
+
 {$endif FPC_HAS_FEATURE_FILEIO}
 
 { helper for targets supporting no ansistrings, it is used
@@ -2112,7 +2167,7 @@ function min(v1,v2 : SizeInt) : SizeInt;
 
 { Typed file }
 {$i typefile.inc}
-{$endif FPC_HAS_FEATURE_FILEIO}
+{$endif defined(FPC_HAS_FEATURE_FILEIO) or defined(FPC_HAS_FEATURE_TEXTIO)}
 
 
 {*****************************************************************************

@@ -14,7 +14,6 @@
  **********************************************************************}
 unit utstGovernance;
 
-{ tests for the unified suppression-source model }
 
 {$mode objfpc}{$H+}
 
@@ -97,7 +96,7 @@ var
 begin
   SetLength(lIssues, 1);
   lIssues[0] := MakeFpIssue('Seed', 'src/seed.pas', 1, aFingerprint);
-  Result := MakeBaseline(lIssues);
+  Result := TFpSonarBaseline.FromIssues(lIssues);
 end;
 
 
@@ -107,8 +106,7 @@ var
   lSev: TFpSonarSeverity;
 
 begin
-  // Every per-severity axis unlimited (-1, never trips); total capped at 0 so
-  // ANY issue fails the gate — and an empty active set passes it.
+  // Every per-severity axis unlimited (-1); the total capped at 0.
   for lSev := Low(TFpSonarSeverity) to High(TFpSonarSeverity) do
     Result.MaxPerSeverity[lSev] := -1;
   Result.MaxTotal := 0;
@@ -203,8 +201,7 @@ var
   lBaseline: TFpSonarBaseline;
 
 begin
-  // The tracker on a NOSONAR line is exempt from the NOSONAR branch; with no
-  // glob/baseline it stays ssActive (the exemption survives the refactor).
+  // The tracker on a NOSONAR line is exempt from the NOSONAR branch.
   SetLength(lIssues, 1);
   lIssues[0] := MakeFpIssue('TrackNoSonar', 'a.pas', 10, 'fp-track');
   lBaseline := BaselineWith('unrelated');
@@ -259,7 +256,7 @@ begin
   SetLength(lIssues, 2);
   lIssues[0] := MakeFpIssue('RuleA', 'a.pas', 1, 'fp-a');
   lIssues[1] := MakeFpIssue('RuleB', 'b.pas', 2, 'fp-b');
-  lEmpty := MakeBaseline(nil);
+  lEmpty := TFpSonarBaseline.FromIssues(nil);
 
   lOut := ClassifySuppressions(lIssues, nil, nil, lEmpty);
   AssertEquals('length preserved', 2, Length(lOut));
@@ -283,7 +280,7 @@ begin
   lIssues[2] := MakeFpIssue('RuleC', 'c.pas', 3, 'fp-c');
   SetLength(lGlobs, 1);
   lGlobs[0] := MakeGlob('RuleB', '');
-  lEmpty := MakeBaseline(nil);
+  lEmpty := TFpSonarBaseline.FromIssues(nil);
 
   lActive := ActiveIssues(ClassifySuppressions(lIssues, nil, lGlobs, lEmpty));
   AssertEquals('only the two active issues survive', 2, Length(lActive));

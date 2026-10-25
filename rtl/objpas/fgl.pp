@@ -36,7 +36,7 @@ uses
 {$ENDIF FPC_DOTTEDUNITS}
 
 const
-  MaxListSize = Maxint div 16;
+  MaxListSize = Maxint div 4;
 
 type
   EListError = class(Exception);
@@ -86,6 +86,7 @@ type
     function IndexOf(Item: Pointer): Integer;
     procedure Insert(Index: Integer; Item: Pointer);
     function Insert(Index: Integer): Pointer;
+    function InsertRange(AIndex, ACount: Integer):pointer;
     procedure Move(CurIndex, NewIndex: Integer);
     procedure Assign(Obj: TFPSList);
     procedure AddList(Obj: TFPSList);
@@ -93,6 +94,10 @@ type
     procedure Pack;
     procedure Sort(Compare: TFPSListCompareFunc);
     procedure Sort(Compare: TFPSListCompareFunc; SortingAlgorithm: PSortingAlgorithm);
+    // Sorts the items aStartIndex..aEndIndex; does nothing when aEndIndex<aStartIndex
+    procedure SortRange(aStartIndex, aEndIndex: Integer; aCompare: TFPSListCompareFunc);
+    // Sorts the items aStartIndex..aEndIndex with aSortingAlgorithm; does nothing when aEndIndex<aStartIndex
+    procedure SortRange(aStartIndex, aEndIndex: Integer; aCompare: TFPSListCompareFunc; aSortingAlgorithm: PSortingAlgorithm);
     property Capacity: Integer read FCapacity write SetCapacity;
     property Count: Integer read FCount write SetCount;
     property Items[Index: Integer]: Pointer read Get write Put; default;
@@ -161,6 +166,10 @@ type
     function Remove(const Item: T): Integer; {$ifdef FGLINLINE} inline; {$endif}
     procedure Sort(Compare: TCompareFunc);
     procedure Sort(Compare: TCompareFunc; SortingAlgorithm: PSortingAlgorithm);
+    // Sorts the items aStartIndex..aEndIndex; does nothing when aEndIndex<aStartIndex
+    procedure SortRange(aStartIndex, aEndIndex: Integer; aCompare: TCompareFunc);
+    // Sorts the items aStartIndex..aEndIndex with aSortingAlgorithm; does nothing when aEndIndex<aStartIndex
+    procedure SortRange(aStartIndex, aEndIndex: Integer; aCompare: TCompareFunc; aSortingAlgorithm: PSortingAlgorithm);
     property Items[Index: Integer]: T read Get write Put; default;
     property List: PTypeList read GetList;
   end;
@@ -201,6 +210,10 @@ type
     function Remove(const Item: T): Integer; {$ifdef FGLINLINE} inline; {$endif}
     procedure Sort(Compare: TCompareFunc);
     procedure Sort(Compare: TCompareFunc; SortingAlgorithm: PSortingAlgorithm);
+    // Sorts the items aStartIndex..aEndIndex; does nothing when aEndIndex<aStartIndex
+    procedure SortRange(aStartIndex, aEndIndex: Integer; aCompare: TCompareFunc);
+    // Sorts the items aStartIndex..aEndIndex with aSortingAlgorithm; does nothing when aEndIndex<aStartIndex
+    procedure SortRange(aStartIndex, aEndIndex: Integer; aCompare: TCompareFunc; aSortingAlgorithm: PSortingAlgorithm);
     property Items[Index: Integer]: T read Get write Put; default;
     property List: PTypeList read GetList;
     property FreeObjects: Boolean read FFreeObjects write FFreeObjects;
@@ -241,6 +254,10 @@ type
     function Remove(const Item: T): Integer; {$ifdef FGLINLINE} inline; {$endif}
     procedure Sort(Compare: TCompareFunc);
     procedure Sort(Compare: TCompareFunc; SortingAlgorithm: PSortingAlgorithm);
+    // Sorts the items aStartIndex..aEndIndex; does nothing when aEndIndex<aStartIndex
+    procedure SortRange(aStartIndex, aEndIndex: Integer; aCompare: TCompareFunc);
+    // Sorts the items aStartIndex..aEndIndex with aSortingAlgorithm; does nothing when aEndIndex<aStartIndex
+    procedure SortRange(aStartIndex, aEndIndex: Integer; aCompare: TCompareFunc; aSortingAlgorithm: PSortingAlgorithm);
     property Items[Index: Integer]: T read Get write Put; default;
     property List: PTypeList read GetList;
   end;
@@ -284,6 +301,10 @@ type
     function Remove(AKey: Pointer): Integer;
     procedure Sort;
     procedure Sort(SortingAlgorithm: PSortingAlgorithm);
+    // Sorts the entries aStartIndex..aEndIndex by key; does nothing when aEndIndex<aStartIndex
+    procedure SortRange(aStartIndex, aEndIndex: Integer);
+    // Sorts the entries aStartIndex..aEndIndex by key with aSortingAlgorithm; does nothing when aEndIndex<aStartIndex
+    procedure SortRange(aStartIndex, aEndIndex: Integer; aSortingAlgorithm: PSortingAlgorithm);
     property Duplicates: TDuplicates read FDuplicates write FDuplicates;
     property KeySize: Integer read FKeySize;
     property DataSize: Integer read FDataSize;
@@ -521,8 +542,11 @@ begin
     Error(SListCapacityError, NewCapacity);
   if NewCapacity = FCapacity then
     exit;
-  ReallocMem(FList, (NewCapacity+1) * FItemSize);
-  FillChar(InternalItems[FCapacity]^, (NewCapacity+1-FCapacity) * FItemSize, #0);
+  if SizeUInt(NewCapacity) >= High(SizeUInt) div SizeUInt(FItemSize) then
+    Error(SListCapacityError, NewCapacity);
+  ReallocMem(FList, SizeUInt(NewCapacity+1) * SizeUInt(FItemSize));
+  if NewCapacity > FCapacity then
+    FillChar(InternalItems[FCapacity]^, SizeUInt(NewCapacity+1-FCapacity) * SizeUInt(FItemSize), #0);
   FCapacity := NewCapacity;
 end;
 
@@ -690,9 +714,11 @@ begin
     IncSize := 8
   else
     IncSize := 4;
-  // If we were at max capacity already, force error.
-  If IncSize<=0 then
-    IncSize:=1; // Will trigger error
+  if IncSize > MaxListSize - FCapacity then
+    if FCapacity < MaxListSize then
+      IncSize := MaxListSize - FCapacity
+    else
+      Error(SListCapacityError, FCapacity);
   SetCapacity(FCapacity + IncSize);
 end;
 
@@ -741,6 +767,29 @@ end;
 procedure TFPSList.Insert(Index: Integer; Item: Pointer);
 begin
   CopyItem(Item, Insert(Index));
+end;
+
+function  TFPSList.InsertRange(AIndex, ACount: Integer):Pointer;
+ 
+begin
+  if ACount<=0 then Exit;
+  if (AIndex<0) or (AIndex>FCount) then
+    RaiseIndexError(AIndex);
+
+  if FCount+ACount>FCapacity then
+    SetCapacity(FCount+ACount);
+  Result:=InternalItems[AIndex];
+  if AIndex<FCount then
+  begin
+    //move list tail to the right; region after Count is zeroed by SetCapacity,
+    //so it's safe to move to (Result+ACount*ItemSize)
+    System.Move(Result^, (Result+SizeInt(ACount)*FItemSize)^, SizeInt(FCount-AIndex)*FItemSize);
+    //zero opened slots: empty items, like Insert() does
+    System.FillChar(Result^, SizeInt(ACount)*FItemSize, 0);
+  end;
+  //note: for AIndex=Count (append) slots are already zeroed: list keeps
+  //'ending filled with zeros' invariant
+  Inc(FCount, ACount);
 end;
 
 function TFPSList.GetLast: Pointer;
@@ -851,6 +900,26 @@ var
 begin
   Context.Compare := Compare;
   SortingAlgorithm^.ItemListSorter_ContextComparer(FList, FCount, FItemSize, @TFPSList_Sort_Comparer, @Context);
+end;
+
+procedure TFPSList.SortRange(aStartIndex, aEndIndex: Integer; aCompare: TFPSListCompareFunc);
+begin
+  SortRange(aStartIndex, aEndIndex, aCompare, {$IFDEF FPC_DOTTEDUNITS}System.{$ENDIF}SortBase.DefaultSortingAlgorithm);
+end;
+
+procedure TFPSList.SortRange(aStartIndex, aEndIndex: Integer; aCompare: TFPSListCompareFunc; aSortingAlgorithm: PSortingAlgorithm);
+var
+  lContext: TFPSList_Sort_Comparer_Context;
+begin
+  if aEndIndex < aStartIndex then
+    exit;
+  if aStartIndex < 0 then
+    Error(SListIndexError, aStartIndex);
+  if aEndIndex >= FCount then
+    Error(SListIndexError, aEndIndex);
+  lContext.Compare := aCompare;
+  aSortingAlgorithm^.ItemListSorter_ContextComparer(FList + FItemSize*aStartIndex, aEndIndex-aStartIndex+1, FItemSize,
+    @TFPSList_Sort_Comparer, @lContext);
 end;
 
 procedure TFPSList.QuickSort(L, R: Integer; Compare: TFPSListCompareFunc);
@@ -1067,6 +1136,18 @@ begin
   inherited Sort(@ItemPtrCompare, SortingAlgorithm);
 end;
 
+procedure TFPGList.SortRange(aStartIndex, aEndIndex: Integer; aCompare: TCompareFunc);
+begin
+  FOnCompare := aCompare;
+  inherited SortRange(aStartIndex, aEndIndex, @ItemPtrCompare);
+end;
+
+procedure TFPGList.SortRange(aStartIndex, aEndIndex: Integer; aCompare: TCompareFunc; aSortingAlgorithm: PSortingAlgorithm);
+begin
+  FOnCompare := aCompare;
+  inherited SortRange(aStartIndex, aEndIndex, @ItemPtrCompare, aSortingAlgorithm);
+end;
+
 
 {****************************************************************************}
 {*                TFPGObjectList                                            *}
@@ -1203,6 +1284,18 @@ begin
   inherited Sort(@ItemPtrCompare, SortingAlgorithm);
 end;
 
+procedure TFPGObjectList.SortRange(aStartIndex, aEndIndex: Integer; aCompare: TCompareFunc);
+begin
+  FOnCompare := aCompare;
+  inherited SortRange(aStartIndex, aEndIndex, @ItemPtrCompare);
+end;
+
+procedure TFPGObjectList.SortRange(aStartIndex, aEndIndex: Integer; aCompare: TCompareFunc; aSortingAlgorithm: PSortingAlgorithm);
+begin
+  FOnCompare := aCompare;
+  inherited SortRange(aStartIndex, aEndIndex, @ItemPtrCompare, aSortingAlgorithm);
+end;
+
 
 {****************************************************************************}
 {*                TFPGInterfacedObjectList                                  *}
@@ -1336,6 +1429,18 @@ procedure TFPGInterfacedObjectList.Sort(Compare: TCompareFunc; SortingAlgorithm:
 begin
   FOnCompare := Compare;
   inherited Sort(@ItemPtrCompare, SortingAlgorithm);
+end;
+
+procedure TFPGInterfacedObjectList.SortRange(aStartIndex, aEndIndex: Integer; aCompare: TCompareFunc);
+begin
+  FOnCompare := aCompare;
+  inherited SortRange(aStartIndex, aEndIndex, @ItemPtrCompare);
+end;
+
+procedure TFPGInterfacedObjectList.SortRange(aStartIndex, aEndIndex: Integer; aCompare: TCompareFunc; aSortingAlgorithm: PSortingAlgorithm);
+begin
+  FOnCompare := aCompare;
+  inherited SortRange(aStartIndex, aEndIndex, @ItemPtrCompare, aSortingAlgorithm);
 end;
 
 {****************************************************************************
@@ -1575,6 +1680,16 @@ end;
 procedure TFPSMap.Sort(SortingAlgorithm: PSortingAlgorithm);
 begin
   inherited Sort(FOnKeyPtrCompare, SortingAlgorithm);
+end;
+
+procedure TFPSMap.SortRange(aStartIndex, aEndIndex: Integer);
+begin
+  inherited SortRange(aStartIndex, aEndIndex, FOnKeyPtrCompare);
+end;
+
+procedure TFPSMap.SortRange(aStartIndex, aEndIndex: Integer; aSortingAlgorithm: PSortingAlgorithm);
+begin
+  inherited SortRange(aStartIndex, aEndIndex, FOnKeyPtrCompare, aSortingAlgorithm);
 end;
 
 {****************************************************************************
@@ -1956,7 +2071,7 @@ procedure TFPGMapInterfacedObjectData.CopyData(Src, Dest: Pointer);
 begin
   if Assigned(Pointer(Dest^)) then
     TData(Dest^)._Release;
-  TData(Dest^) := TData(Src^);
+  Pointer(Dest^) := Pointer(Src^);
   if Assigned(Pointer(Dest^)) then
     TData(Dest^)._AddRef;
 end;

@@ -486,6 +486,12 @@ implementation
     { returns true, if def is a currency type }
     function is_currency(def : tdef) : boolean;
       begin
+         if not Assigned(def) then
+           begin
+             result:=False;
+             Exit;
+           end;
+
          case s64currencytype.typ of
            orddef :
              result:=(def.typ=orddef) and

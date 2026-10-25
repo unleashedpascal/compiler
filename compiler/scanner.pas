@@ -27,7 +27,7 @@ interface
 
     uses
        cclasses,
-       globtype,globals,constexp,version,tokens,
+       cdynset,globtype,globals,constexp,version,tokens,
        symtype,symdef,symsym,
        verbose,comphook,
        finput,
@@ -88,6 +88,10 @@ interface
          patternw : tcompilerwidestring;
          settings : tsettings;
          tokenbuf : tdynamicarray;
+         { read position inside tokenbuf at the time the replay was suspended:
+           the same buffer can be replayed re-entrantly (e.g. a generic whose
+           body specializes the same generic with different parameters) }
+         tokenbuf_pos : longint;
          tokenbuf_needs_swapping : boolean;
          next     : treplaystack;
          pending  : tpendingstate;
@@ -315,7 +319,7 @@ interface
           procedure exit_interp_level;
           function  readpreproc:ttoken;
           function  readpreprocint(var value:int64;const place:string):boolean;
-          function  readpreprocset(conform_to:tsetdef;var value:tnormalset;const place:string):boolean;
+          function  readpreprocset(conform_to:tsetdef;var value:tdynset;const place:string):boolean;
           function  asmgetchar:char;
 {$ifdef EXTDEBUG}
           function DumpPointer : string;
@@ -1132,7 +1136,7 @@ type
     constructor create_uint(v: qword);
     constructor create_bool(b: boolean);
     constructor create_str(const s: string);
-    constructor create_set(ns: tnormalset);
+    constructor create_set(ns: tdynset);
     constructor create_real(r: bestreal);
     class function try_parse_number(const s:string):texprvalue; static;
     class function try_parse_real(const s:string):texprvalue; static;
@@ -1144,7 +1148,7 @@ type
     function asInt: Integer;
     function asInt64: Int64;
     function asStr: String;
-    function asSet: tnormalset;
+    function asSet: tdynset;
     destructor destroy; override;
   end;
 
@@ -1203,8 +1207,7 @@ type
           end;
         constset:
           begin
-            new(pnormalset(value.valueptr));
-            pnormalset(value.valueptr)^:=pnormalset(c.value.valueptr)^;
+            tdynset(value.valueptr):=DynSetCopy(tdynset(c.value.valueptr));
           end;
         constguid:
           begin
@@ -1273,12 +1276,11 @@ type
       def:=strdef;
     end;
 
-  constructor texprvalue.create_set(ns: tnormalset);
+  constructor texprvalue.create_set(ns: tdynset);
     begin
       fillchar(value,sizeof(value),#0);
       consttyp:=constset;
-      new(pnormalset(value.valueptr));
-      pnormalset(value.valueptr)^:=ns;
+      tdynset(value.valueptr):=DynSetCopy(ns);
       def:=setdef;
     end;
 
@@ -1357,9 +1359,9 @@ type
             end
           else
           if value.valueord.signed then
-            result:=texprvalue.create_bool(value.valueord.svalue in pnormalset(v.value.valueptr)^)
+            result:=texprvalue.create_bool(DynSetIn(tdynset(v.value.valueptr), value.valueord.svalue))
           else
-            result:=texprvalue.create_bool(value.valueord.uvalue in pnormalset(v.value.valueptr)^);
+            result:=texprvalue.create_bool(DynSetIn(tdynset(v.value.valueptr), value.valueord.uvalue));
         end;
         _OP_NOT:
         begin
@@ -1613,9 +1615,9 @@ type
       result:=value.valueord.svalue;
     end;
 
-  function texprvalue.asSet: tnormalset;
+  function texprvalue.asSet: tdynset;
     begin
-      result:=pnormalset(value.valueptr)^;
+      result:=DynSetCopy(tdynset(value.valueptr));
     end;
 
   function texprvalue.asStr: String;
@@ -1634,7 +1636,7 @@ type
           begin
             result:=',';
             for b:=0 to 255 do
-              if b in pconstset(value.valueptr)^ then
+              if DynSetIn(tdynset(value.valueptr), b) then
                 result:=result+tostr(b)+',';
           end;
         { error values }
@@ -1657,7 +1659,7 @@ type
         constreal :
           dispose(pbestreal(value.valueptr));
         constset :
-          dispose(pnormalset(value.valueptr));
+          tdynset(value.valueptr):=nil;
         constguid :
           dispose(pguid(value.valueptr));
         constnil,
@@ -1974,7 +1976,7 @@ type
            hasKlammer,
            read_next: Boolean;
            exprvalue:texprvalue;
-           ns:tnormalset;
+           ns:tdynset;
            fs,path,name: tpathstr;
            foundfile: TCmdStr;
            found: boolean;
@@ -2613,7 +2615,7 @@ type
            else if current_scanner.preproc_token = _LECKKLAMMER then
              begin
                preproc_consume(_LECKKLAMMER);
-               ns:=[];
+               ns:=nil;
                read_next:=false;
                while (current_scanner.preproc_token in [_ID,_INTCONST]) or read_next do
                begin
@@ -2628,13 +2630,13 @@ type
                      break;
                    end;
                  { reject duplicate enums in the set }
-                 if exprvalue.asInt in ns then
+                 if DynSetIn(ns, exprvalue.asInt) then
                    begin
                      Message1(sym_e_duplicate_id,current_scanner.preproc_pattern);
                      result:=texprvalue.create_error;
                      break;
                    end;
-                 include(ns,exprvalue.asInt);
+                 DynSetInclude(ns,exprvalue.asInt);
                  if current_scanner.preproc_token = _COMMA then
                    begin
                      preproc_consume(_COMMA);
@@ -2828,7 +2830,10 @@ type
                  mac.is_c_macro:=true;
                  current_scanner.readchar;
                  current_scanner.skipspace;
-               end;
+               end
+             else
+               { $definec always defines a text-substitution (C-style) macro }
+               mac.is_c_macro:=true;
 
              { key words are never substituted }
              if is_keyword(hs) then
@@ -3465,6 +3470,10 @@ type
         pending:=apending;
         verbosity:=averbosity;
         tokenbuf:=atokenbuf;
+        if assigned(atokenbuf) then
+          tokenbuf_pos:=atokenbuf.pos
+        else
+          tokenbuf_pos:=0;
         tokenbuf_needs_swapping:=change_endian;
         next:=anext;
       end;
@@ -4352,6 +4361,9 @@ type
             copywidestring(replaystack.patternw,patternw);
             cstringpattern:=replaystack.cstringpattern;
             replaytokenbuf:=replaystack.tokenbuf;
+            { the suspended buffer may have been replayed again in the meantime }
+            if assigned(replaytokenbuf) then
+              replaytokenbuf.seek(replaystack.tokenbuf_pos);
             change_endian_for_replay:=replaystack.tokenbuf_needs_swapping;
             { restore compiler settings }
             current_settings:=replaystack.settings;
@@ -7658,7 +7670,7 @@ exit_label:
       end;
 
 
-    function tscannerfile.readpreprocset(conform_to:tsetdef;var value:tnormalset;const place:string):boolean;
+    function tscannerfile.readpreprocset(conform_to:tsetdef;var value:tdynset;const place:string):boolean;
       var
         hs : texprvalue;
       begin

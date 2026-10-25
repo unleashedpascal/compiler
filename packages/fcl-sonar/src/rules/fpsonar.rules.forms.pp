@@ -14,8 +14,6 @@
  **********************************************************************}
 unit FpSonar.Rules.Forms;
 
-{ LCL form-file rule (rtAst): flags a form unit missing its .lfm form
-  resource. }
 
 {$mode objfpc}{$H+}
 
@@ -102,8 +100,7 @@ var
 begin
   if (aContext.Module = nil) or (aContext.FileName = '') then
     Exit;
-  lBaseTypes := SplitCommaList(RuleParamStr(aContext.Config,
-    FMetadata.RuleId, 'formBaseTypes', cDefaultFormBaseTypes));
+  lBaseTypes := SplitCommaList(aContext.Config.RuleParamStr(FMetadata.RuleId, 'formBaseTypes', cDefaultFormBaseTypes));
   lTypes := EnumerateTypes(aContext.Module);
   lLine := 0;
   for i := 0 to High(lTypes) do
@@ -131,6 +128,8 @@ initialization
   lMeta := TRuleMetadata.Make('LfmFormFileExists', rtAst, rfAst, sevMinor, itCodeSmell,
     cfMedium, True, cKeyLfmFormFileExists);
   lMeta.AddParam('formBaseTypes', rpkString, cDefaultFormBaseTypes);
+  lMeta.Description :=
+    'Flags a form/frame/datamodule unit that has no sibling .lfm file.';
   RegisterRule(TRuleLfmFormFileExists.Create(lMeta));
   RegisterMessage(cKeyLfmFormFileExists, SLfmFormFileExists);
 

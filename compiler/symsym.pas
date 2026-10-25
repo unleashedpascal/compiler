@@ -507,6 +507,22 @@ interface
        end;
        tsyssymclass = class of tsyssym;
 
+       { used in composition to reference a symbol from a child element }
+       tsymrefsym = class(tstoredsym)
+         fieldvs : tfieldvarsym;
+         fieldvsderef : tderef;
+         ref : tsym;
+         refderef : tderef;
+         constructor create(const s : tsym;f : tfieldvarsym);virtual;
+         constructor ppuload(ppufile:tcompilerppufile);
+          { do not override this routine in platform-specific subclasses,
+            override ppuwrite_platform instead }
+          procedure ppuwrite(ppufile:tcompilerppufile);override;final;
+          procedure buildderef;override;
+          procedure deref;override;
+       end;
+       tsymrefsymclass = class of tsymrefsym;
+
     const
        maxmacrolen=16*1024;
 
@@ -554,6 +570,7 @@ interface
        cconstsym: tconstsymclass;
        cenumsym: tenumsymclass;
        csyssym: tsyssymclass;
+       csymrefsym: tsymrefsymclass;
 
     { generate internal static field name based on regular field name }
     function internal_static_field_name(const fieldname: TSymStr): TSymStr;
@@ -568,7 +585,7 @@ implementation
 
     uses
        { global }
-       verbose,cmsgs,
+       cdynset,verbose,cmsgs,
        { target }
        systems,
        { symtable }
@@ -2860,7 +2877,6 @@ implementation
     constructor tconstsym.ppuload(ppufile:tcompilerppufile);
       var
          pd : pbestreal;
-         ps : pnormalset;
          pc : pchar;
          pw : tcompilerwidestring;
          i  : longint;
@@ -2931,9 +2947,8 @@ implementation
            constset :
              begin
                ppufile.getderef(constdefderef);
-               new(ps);
-               ppufile.getset(tppuset32(ps^));
-               value.valueptr:=ps;
+               setlength(tdynset(value.valueptr),32);
+               ppufile.getset(tdynset(value.valueptr));
              end;
            constguid :
              begin
@@ -2967,7 +2982,7 @@ implementation
           constreal :
             dispose(pbestreal(value.valueptr));
           constset :
-            dispose(pnormalset(value.valueptr));
+            tdynset(value.valueptr):=nil;
           constguid :
             dispose(pguid(value.valueptr));
         end;
@@ -3015,6 +3030,10 @@ implementation
           ppufile.putdata(value.valuews.data[0],value.valuews.len*sizeof(tcompilerwidechar));
       end;
 
+    var
+      tmpset: array[0..31] of byte;
+      setlen,
+      i: longint;
 
       begin
          inherited ppuwrite(ppufile);
@@ -3056,7 +3075,17 @@ implementation
            constset :
              begin
                ppufile.putderef(constdefderef);
-               ppufile.putset(tppuset32(value.valueptr^));
+               { the ppu format supports only sets up to 256 elements }
+               setlen:=length(tdynset(value.valueptr));
+               for i:=sizeof(tmpset) to setlen-1 do
+                 if tdynset(value.valueptr)[i]<>0 then
+                   internalerror(2026102302);
+               if setlen>sizeof(tmpset) then
+                 setlen:=sizeof(tmpset);
+               fillchar(tmpset,sizeof(tmpset),0);
+               if setlen>0 then
+                 move(tdynset(value.valueptr)[0],tmpset[0],setlen);
+               ppufile.putset(tmpset);
              end;
            constguid :
              begin
@@ -3272,6 +3301,57 @@ implementation
       begin
         str(l,s);
         result:=tsyssym(syssym_list.find(s));
+      end;
+
+
+{****************************************************************************
+                                TSYMREFSYM
+****************************************************************************}
+
+    constructor tsymrefsym.create(const s : tsym;f : tfieldvarsym);
+      begin
+         inherited create(symrefsym,s.name);
+
+         if not (f.vardef is tabstractrecorddef) or
+            not assigned(tabstractrecorddef(f.vardef).symtable.symlist.findwithhash(s.name,s.hash)) then
+           internalerror(2024010602);
+
+         ref:=s;
+         refderef.reset;
+         fieldvs:=f;
+         fieldvsderef.reset;
+      end;
+
+    constructor tsymrefsym.ppuload(ppufile:tcompilerppufile);
+      begin
+        inherited ppuload(symrefsym,ppufile);
+        ppufile.getderef(refderef);
+        ppufile.getderef(fieldvsderef);
+        ppuload_platform(ppufile);
+      end;
+
+
+    procedure tsymrefsym.buildderef;
+      begin
+        inherited;
+        refderef.build(ref);
+        fieldvsderef.build(fieldvs);
+      end;
+
+
+    procedure tsymrefsym.deref;
+      begin
+        inherited;
+        ref:=tsym(refderef.resolve);
+        fieldvs:=tfieldvarsym(fieldvsderef.resolve);
+      end;
+
+    procedure tsymrefsym.ppuwrite(ppufile:tcompilerppufile);
+      begin
+        inherited ppuwrite(ppufile);
+        ppufile.putderef(refderef);
+        ppufile.putderef(fieldvsderef);
+        writeentry(ppufile,ibsymrefsym);
       end;
 
 {*****************************************************************************

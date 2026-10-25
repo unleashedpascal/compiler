@@ -14,7 +14,6 @@
  **********************************************************************}
 unit utstScanner;
 
-{ Position-asserting test for the trivia-on scanner adapter }
 
 {$mode objfpc}{$H+}
 
@@ -57,7 +56,7 @@ begin
     try
       Result := lScanner.ScanFile(
         lFix.Add('scannerfixture.pas', cScannerFixture), 'OBJFPC',
-        ['FPC', 'CPUX86_64', 'UNIX', 'LINUX']);
+        ['FPC', 'CPUX86_64', 'UNIX', 'LINUX'], []);
     finally
       lScanner.Free;
     end;
@@ -130,8 +129,7 @@ var
 begin
   lTokens := ScanFixture;
 
-  // Leading indentation before the block comment: whitespace token at row 9,
-  // col 1 (the two spaces preceding the comment at col 3).
+  // Leading indentation before the block comment: whitespace at row 9, col 1.
   AssertTokenAt(lTokens, tkWhitespace, 9, 1,
     'leading-indentation whitespace token expected');
 
@@ -147,14 +145,12 @@ var
   lBegin, lOther: TFpSonarToken;
 
 begin
-  { IsBeginToken is True only for the `begin` reserved word; another
-    keyword (here `interface`) is rejected. The NoLegacyInitializationSection
-    rule uses this to tell a legacy begin..end. unit body from an explicit
-    initialization section without naming PScanner/tkbegin (chokepoint). }
+  { IsBegin is True only for the `begin` reserved word; another keyword (here
+    `interface`) is rejected. }
   lBegin.Kind := tkbegin;
   lOther.Kind := tkinterface;
-  AssertTrue('begin token is classified as a begin token', IsBeginToken(lBegin));
-  AssertFalse('interface keyword is not a begin token', IsBeginToken(lOther));
+  AssertTrue('begin token is classified as a begin token', lBegin.IsBegin);
+  AssertFalse('interface keyword is not a begin token', lOther.IsBegin);
 end;
 
 

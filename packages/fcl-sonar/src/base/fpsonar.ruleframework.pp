@@ -35,6 +35,8 @@ type
     CompilerMode: string;
     // Tokens survive a failed parse.
     Tokens: TFpSonarTokenArray;
+    // The define set the scan ended with; uncaptured when the scan failed.
+    Defines: TFpSonarDefineSet;
     // Lines are the raw physical lines, 1-based to the rule (Lines[0] = source line 1),
     Lines: TFpSonarStringArray;
     // Module is nil when the parse failed;
@@ -91,6 +93,11 @@ type
     // Problem strings: every rule failing IsComplete plus every
     // duplicate RuleId. Empty array => the registry is clean.
     function Validate: TFpSonarStringArray;
+    // Validates a loaded config's per-rule 'params' against this registry's rule
+    // metadata: unknown param key, wrong kind, or an uncompilable rpkRegex is a
+    // False + aError. An unknown rule id is IGNORED (forward-compat). Nil-safe.
+    function ValidateConfig(const aConfig: TFpSonarConfig;
+      out aError: string): boolean;
     // Frees all owned rules and empties the registry (test-local reuse).
     procedure Clear;
     // Number of registered rules.
@@ -126,17 +133,19 @@ type
       const aDefines, aUnitPaths, aIncludePaths: array of string;
       const aCollector: TFpSonarIssueCollector); overload;
     // As above, additionally opting the per-unit SEM resolver into the real-RTL-preferred mode
+    // and selecting the source dialect (dlPas2js enables pas2js parsing).
     procedure Analyze(const aFileName, aCompilerMode: string;
       const aDefines, aUnitPaths, aIncludePaths: array of string;
       aRealRtl: boolean; aTargetPointerSize: integer;
-      const aCollector: TFpSonarIssueCollector); overload;
+      const aCollector: TFpSonarIssueCollector;
+      aDialect: TFpSonarDialect = dlDefault); overload;
     // The pure dispatch over an already-analyzed SourceFile, so tests can drive it over a hand-analyzed file.
     procedure Dispatch(aSourceFile: TFpSonarSourceFile;
       const aFileName, aCompilerMode: string;
       const aCollector: TFpSonarIssueCollector);
     // The metadata-completeness check over the wrapped registry.
     function ValidateRegistry: TFpSonarStringArray;
-    // The ruleset/fail policy. Defaults to DefaultConfig;
+    // The ruleset/fail policy. Defaults to TFpSonarConfig.Default;
     property Config: TFpSonarConfig read FConfig write FConfig;
     // The optional NOSONAR suppression map, caller-owned. Default Nil.
     property SuppressionMap: TFpSonarSuppressionMap
@@ -154,10 +163,6 @@ function RuleRegistry: TRuleRegistry;
 
 // Self-registration entry every rule unit calls in its initialization:
 procedure RegisterRule(aRule: TRuleBase);
-
-// Validates a loaded config's per-rule 'params' against the registry.
-function ValidateConfigParams(const aConfig: TFpSonarConfig;
-  aRegistry: TRuleRegistry; out aError: string): boolean;
 
 
 implementation
@@ -350,8 +355,8 @@ begin
 end;
 
 
-function ValidateConfigParams(const aConfig: TFpSonarConfig;
-  aRegistry: TRuleRegistry; out aError: string): boolean;
+function TRuleRegistry.ValidateConfig(const aConfig: TFpSonarConfig;
+  out aError: string): boolean;
 var
   i, j: integer;
   lRule: TRuleBase;
@@ -361,7 +366,9 @@ var
 begin
   Result := False;
   aError := '';
-  if aRegistry = nil then
+  // Nil-safe: a nil registry validates nothing (Self=nil short-circuits before
+  // any method call).
+  if Self = nil then
   begin
     Result := True;
     Exit;
@@ -369,7 +376,7 @@ begin
   for i := 0 to High(aConfig.Rules) do
   begin
     // Unknown rule id => IGNORED (forward-compat), exactly like enable/severity.
-    lRule := aRegistry.FindById(aConfig.Rules[i].RuleId);
+    lRule := FindById(aConfig.Rules[i].RuleId);
     if lRule = nil then
       Continue;
     lMeta := lRule.Metadata;
@@ -403,7 +410,7 @@ constructor TFpSonarRuleEngine.Create;
 begin
   inherited Create;
   FRegistry := RuleRegistry;
-  FConfig := DefaultConfig;
+  FConfig := TFpSonarConfig.Default;
 end;
 
 
@@ -411,7 +418,7 @@ constructor TFpSonarRuleEngine.CreateWith(aRegistry: TRuleRegistry);
 begin
   inherited Create;
   FRegistry := aRegistry;
-  FConfig := DefaultConfig;
+  FConfig := TFpSonarConfig.Default;
 end;
 
 
@@ -472,18 +479,19 @@ end;
 procedure TFpSonarRuleEngine.Analyze(const aFileName, aCompilerMode: string;
   const aDefines, aUnitPaths, aIncludePaths: array of string;
   aRealRtl: boolean; aTargetPointerSize: integer;
-  const aCollector: TFpSonarIssueCollector);
+  const aCollector: TFpSonarIssueCollector;
+  aDialect: TFpSonarDialect = dlDefault);
 var
   lSourceFile: TFpSonarSourceFile;
 begin
   // The engine owns the SourceFile it creates and frees it here.
   lSourceFile := TFpSonarSourceFile.Create;
   try
-    // Story 6-18 — forward auto-detect ppudump resolution into the per-unit boundary.
+    // Forward auto-detect ppudump resolution into the per-unit boundary.
     lSourceFile.PpuAutoDetect := FPpuAutoDetect;
     lSourceFile.PpuCacheDir := FPpuCacheDir;
     lSourceFile.Analyze(aFileName, aCompilerMode, aDefines, aUnitPaths,
-      aIncludePaths, aRealRtl, aTargetPointerSize);
+      aIncludePaths, aRealRtl, aTargetPointerSize, aDialect);
     Dispatch(lSourceFile, aFileName, aCompilerMode, aCollector);
   finally
     lSourceFile.Free;
@@ -509,6 +517,7 @@ begin
   lContext.FileName := aFileName;
   lContext.CompilerMode := aCompilerMode;
   lContext.Tokens := aSourceFile.Tokens;
+  lContext.Defines := aSourceFile.Defines;
   lContext.Lines := aSourceFile.Lines;
   lContext.Module := aSourceFile.Module;
   lContext.ParseSucceeded := aSourceFile.ParseSucceeded;
@@ -530,7 +539,7 @@ begin
       lRule := FRegistry.Rule(i);
       lMeta := lRule.Metadata;
       if (lMeta.Tier = lTier)
-        and RuleEnabled(FConfig, lMeta.RuleId, lMeta.DefaultEnabled)
+        and FConfig.RuleEnabled(lMeta.RuleId, lMeta.DefaultEnabled)
         and FeedAvailable(lMeta.Feed, lContext) then
         RunRule(lRule, lContext, aCollector);
     end;

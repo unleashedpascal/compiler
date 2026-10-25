@@ -73,7 +73,7 @@ implementation
 
 uses
   { common }
-  cutils,fpchash,
+  cdynset,cutils,fpchash,
   { global }
   globals,tokens,verbose,finput,constexp,
   { symtable }
@@ -301,7 +301,7 @@ uses
         enumsym : tsym;
         enumname : string;
         sp : pchar;
-        ps : ^tconstset;
+        ps : pointer;
         pd : ^bestreal;
         i,l : integer;
       begin
@@ -341,13 +341,13 @@ uses
             end;
           setconstn:
             begin
-              new(ps);
-              ps^:=tsetconstnode(node).value_set^;
+              ps:=nil;
+              tdynset(ps):=DynSetCopy(tsetconstnode(node).value_set);
               sym:=cconstsym.create_ptr(undefinedname,constset,ps,fromdef);
               setdef:=tsetdef(tsetconstnode(node).resultdef);
               prettyname:='[';
               for i := setdef.setbase to setdef.setmax do
-                if i in tsetconstnode(node).value_set^ then
+                if DynSetIn(tsetconstnode(node).value_set, i) then
                   begin
                     if setdef.elementdef.typ=enumdef then
                       enumsym:=tenumdef(setdef.elementdef).int2enumsym(i)
@@ -2698,9 +2698,9 @@ uses
                     include(defoptions,df_genconstraint);
                   end
               else
-                // the constraint was rejected: recover as an unconstrained
-                // parameter; keeping the shared errordef would corrupt its
-                // typesym below and IE in check_generic_constraints later
+                { the constraint was rejected: recover as an unconstrained
+                  parameter; keeping the shared errordef would corrupt its
+                  typesym below and IE in check_generic_constraints later }
                 basedef:=cundefineddef.create(false);
 
               for i:=firstidx to result.count-1 do

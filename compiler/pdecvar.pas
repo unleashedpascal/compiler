@@ -887,9 +887,9 @@ implementation
                     setconstn :
                       begin
                         if (source_info.endian=target_info.endian) then
-                          p.default:=plongint(tsetconstnode(pt).value_set)^
+                          p.default:=longint(tsetconstnode(pt).getcardinal)
                         else
-                          p.default:=longint(reverse_longword(plongword(tsetconstnode(pt).value_set)^));
+                          p.default:=longint(reverse_longword(tsetconstnode(pt).getcardinal));
                         include(p.propoptions,ppo_default_is_set);
                       end;
                     ordconstn :
@@ -2424,7 +2424,14 @@ implementation
 
 
     procedure read_record_fields(options:Tvar_dec_options; reorderlist: TFPObjectList; variantdesc : ppvariantrecdesc;out had_generic:boolean; out attr_element_count : integer);
+      type
+        tcompositefield=record
+          fieldvs:tfieldvarsym;
+          visibility:tvisibility;
+        end;
+        pcompositefield=^tcompositefield;
       var
+         cf : TFPList;
          sc : TFPObjectList;
          i  : longint;
          hs,sorg : string;
@@ -2437,6 +2444,7 @@ implementation
          maxpadalign, startpadalign: shortint;
          pt : tnode;
          fieldvs   : tfieldvarsym;
+         cfvs : pcompositefield;
          hstaticvs : tstaticvarsym;
          vs    : tabstractvarsym;
          srsym : tsym;
@@ -2549,6 +2557,7 @@ implementation
            consume(_ID);
          { read vars }
          sc:=TFPObjectList.create(false);
+         cf:=TFPList.create;
          removeclassoption:=false;
          had_generic:=false;
          attr_element_count:=0;
@@ -2965,65 +2974,172 @@ implementation
              semicoloneaten:=false;
              anon_target_def:=nil;
              sc.clear;
-             repeat
-               if primed_first_field then
-                 begin
-                   { a UNION/EMBED that turned out to be a field name was
-                     already consumed by the keyword probe; seed the collection
-                     without re-reading and without consuming another _ID }
-                   sorg:=primed_first_sorg;
-                   vs:=cfieldvarsym.create(sorg,vs_value,generrordef,[]);
-                   vs.visibility:=visibility;
-                   primed_first_field:=false;
-                 end
-               else
-                 begin
-                   sorg:=current_scanner.orgpattern;
-                   if current_scanner.token=_ID then
-                     begin
-                       vs:=cfieldvarsym.create(sorg,vs_value,generrordef,[]);
+             { Check for composition "contains" }
+             if (m_record_composition in current_settings.modeswitches) and
+               { make sure only usable for records (in case this method is called for other types) }
+                (recst.symtabletype=recordsymtable) and
+                try_to_consume(_CONTAINS) then
+               begin
+                 sorg:='';
+                 srsym:=nil;
+                 { Read alias composition for existing fields }
+                 if try_to_consume(_ALIAS) then
+                   begin
+                     sorg:=current_scanner.orgpattern;
+                     hs:=current_scanner.pattern;
+                     consume(_ID);
+                     searchsym(hs,srsym,srsymtable);
+                     if not assigned(srsym) or (srsym.typ<>fieldvarsym) then
+                       begin
+                         Message(parser_e_illegal_expression);
+                         { try to recover to find more errors }
+                         consume(_ID);
+                         consume(_SEMICOLON);
+                         continue;
+                       end;
+                     { check for duplicates }
+                     for i:=0 to cf.count-1 do
+                       if pcompositefield(cf[i])^.fieldvs=srsym then
+                         begin
+                           Message(sym_e_duplicate_id);
+                           consume(_SEMICOLON);
+                           continue;
+                         end;
 
-                       { normally the visibility is set via addfield, but sometimes
-                         we collect symbols so we can add them in a batch of
-                         potentially mixed visibility, and then the individual
-                         symbols need to have their visibility already set }
+                     new(cfvs);
+                     cfvs^.visibility:=visibility;
+                     cfvs^.fieldvs:=tfieldvarsym(srsym);
+                     cf.add(cfvs);
+                     { because no new field is added, early "exit" and continue
+                       with the next field }
+                     consume(_SEMICOLON);
+                     continue;
+                   end;
+                 { read field name if named composition }
+                 if current_scanner.token=_ID then
+                   begin
+                     sorg:=current_scanner.orgpattern;
+                     hs:=current_scanner.pattern;
+                     searchsym(hs,srsym,srsymtable);
+                     if assigned(srsym) then
+                       case srsym.typ of
+                       fieldvarsym:
+                         begin
+                           consume(_ID);
+                           { existing fields must be referenced with alias }
+                           if current_scanner.token=_COLON then
+                             Message1(sym_e_duplicate_id,srsym.realname)
+                           else
+                             Message(type_e_type_id_expected);
+                           { this is just to allow to find additional errors,
+                             otherwise parsing stop could be forced with consume(_SEMICOLON) }
+                           consume(_COLON);
+                           consume(_ID);
+                           consume(_SEMICOLON);
+                           continue;
+                         end;
+                       typesym,unitsym:
+                           { unnamed field: create unique identifier }
+                           sorg:='';
+                       else
+                         begin
+                           Message(parser_e_illegal_expression);
+                           { try to recover to find more errors }
+                           consume(_ID);
+                           consume(_SEMICOLON);
+                           continue;
+                         end;
+                       end
+                     else
+                       begin
+                         { when a new field symbol is read, we need a type }
+                         consume(_ID);
+                         consume(_COLON);
+                       end;
+                   end;
+                 if sorg='' then
+                   { generate a unique name for an unnamed field }
+                   sorg:='$unknown_'+IntToStr(variantrecordlevel)+'_'+inttostr(recst.symlist.count);
+                 fieldvs:=cfieldvarsym.create(sorg,vs_value,generrordef,[]);
+                 { very dirty hack to check if it's a hidden variabel }
+                 if sorg[1]='$' then
+                   fieldvs.visibility:=vis_hidden
+                 else
+                   fieldvs.visibility:=visibility;
+                 fieldvs.register_sym;
+                 sc.add(fieldvs);
+                 recst.insertsym(fieldvs);
+                 had_generic:=false;
+
+                 new(cfvs);
+                 cfvs^.visibility:=visibility;
+                 cfvs^.fieldvs:=fieldvs;
+                 cf.Add(cfvs);
+
+                 block_type:=bt_var_type;
+               end
+             else
+               begin
+                 repeat
+                   if primed_first_field then
+                     begin
+                       { a UNION/EMBED that turned out to be a field name was
+                         already consumed by the keyword probe; seed the collection
+                         without re-reading and without consuming another _ID }
+                       sorg:=primed_first_sorg;
+                       vs:=cfieldvarsym.create(sorg,vs_value,generrordef,[]);
                        vs.visibility:=visibility;
-                       if (vd_check_generic in options) and (current_scanner.idtoken=_GENERIC) then
-                         had_generic:=true;
+                       primed_first_field:=false;
                      end
                    else
-                     vs:=nil;
-                   consume(_ID);
-                 end;
-               if assigned(vs) and
-                  (
-                    not had_generic or
-                    not (current_scanner.token in [_PROCEDURE,_FUNCTION,_CLASS])
-                  ) then
-                 begin
-                   vs.register_sym;
-                   sc.add(vs);
-                   { catch a field name that shadows something already
-                     reachable through a previously declared embed /
-                     inline anonymous record. vs.name is not populated
-                     until insertsym registers the symbol with its hash
-                     list, so probe against upper(realname) here. }
-                   field_collides_with_compositions(recst,upper(vs.realname));
-                   recst.insertsym(vs);
-                   had_generic:=false;
-                 end
-               else
-                 vs.free; // no nil needed
-             until not try_to_consume(_COMMA);
-             if m_delphi in current_settings.modeswitches then
-               block_type:=bt_var_type
-             else
-               block_type:=old_block_type;
-             if had_generic and (sc.count=0) then
-               break;
-             consume(_COLON);
-             if attr_element_count=0 then
-               attr_element_count:=sc.Count;
+                     begin
+                       sorg:=current_scanner.orgpattern;
+                       if current_scanner.token=_ID then
+                         begin
+                           vs:=cfieldvarsym.create(sorg,vs_value,generrordef,[]);
+
+                           { normally the visibility is set via addfield, but sometimes
+                             we collect symbols so we can add them in a batch of
+                             potentially mixed visibility, and then the individual
+                             symbols need to have their visibility already set }
+                           vs.visibility:=visibility;
+                           if (vd_check_generic in options) and (current_scanner.idtoken=_GENERIC) then
+                             had_generic:=true;
+                         end
+                       else
+                         vs:=nil;
+                       consume(_ID);
+                     end;
+                   if assigned(vs) and
+                      (
+                        not had_generic or
+                        not (current_scanner.token in [_PROCEDURE,_FUNCTION,_CLASS])
+                      ) then
+                     begin
+                       vs.register_sym;
+                       sc.add(vs);
+                       { catch a field name that shadows something already
+                         reachable through a previously declared embed /
+                         inline anonymous record. vs.name is not populated
+                         until insertsym registers the symbol with its hash
+                         list, so probe against upper(realname) here. }
+                       field_collides_with_compositions(recst,upper(vs.realname));
+                       recst.insertsym(vs);
+                       had_generic:=false;
+                     end
+                   else
+                     vs.free; // no nil needed
+                 until not try_to_consume(_COMMA);
+                 if m_delphi in current_settings.modeswitches then
+                   block_type:=bt_var_type
+                 else
+                   block_type:=old_block_type;
+                 if had_generic and (sc.count=0) then
+                   break;
+                 consume(_COLON);
+                 if attr_element_count=0 then
+                   attr_element_count:=sc.Count;
+               end;
 
              typepos:=current_filepos;
 
@@ -3686,7 +3802,41 @@ implementation
                   uniondef.owner.deletedef(uniondef);
                 end;
            end;
-         { free the list }
+         { Because of duplication checks add composite symbols after all normal symbols have been read }
+         for i:=0 to cf.count-1 do
+           begin
+             visibility:=pcompositefield(cf[i])^.visibility;
+             fieldvs:=pcompositefield(cf[i])^.fieldvs;
+             dispose(pcompositefield(cf[i]));
+             { Only composition with records are allowed }
+             if not (
+               (fieldvs.vardef.typ in [recorddef]) or (
+                 { also allow for generic params that are resolved later }
+                 (fieldvs.vardef.typ=undefineddef) and
+                 (sp_generic_para in fieldvs.vardef.typesym.symoptions)
+               )
+             ) then
+               begin
+                 Message(sym_e_type_must_be_record);
+                 continue;
+               end;
+             { if we compose an undefineddef, we don't need mark and skip }
+             if fieldvs.vardef.typ=undefineddef then
+               begin
+                 include(tabstractrecorddef(recst.defowner).objectoptions, oo_composites_generic);
+                 continue;
+               end;
+             { Composition of generic parameters will be deferred to when the
+               type is specialized. Then this same function will be called
+               again and the type is resolved }
+             if not (
+               (fieldvs.vardef.typ=undefineddef) and
+               (sp_generic_para in fieldvs.vardef.typesym.symoptions)
+             ) then
+               recst.add_composition_references(fieldvs,visibility);
+           end;
+         { free the lists }
+         cf.free;
          sc.free;
          sc := nil;
 {$ifdef powerpc}

@@ -15,7 +15,7 @@
  **********************************************************************}
 
 {$IFNDEF FPC_DOTTEDUNITS}
-unit fpcustwsserver;
+unit FpCustWSServer;
 {$ENDIF FPC_DOTTEDUNITS}
 
 {$mode ObjFPC}{$H+}
@@ -773,7 +773,7 @@ begin
         Terminate;
       end;
     While not Terminated do
-      if Connection.CheckIncoming(WaitTime) = irClose then
+      if Connection.CheckIncoming(Handler.WaitTime) = irClose then
       begin
         // answer for client about close connection
         if not (Connection.CloseState = csClosed) then

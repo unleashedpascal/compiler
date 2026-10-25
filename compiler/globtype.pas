@@ -24,6 +24,9 @@ unit globtype;
 
 interface
 
+    uses
+      cdynset;
+
     const
        maxidlen = 127;
 
@@ -148,8 +151,8 @@ interface
            1 : (value:extended);
        end;
 
-       pconstset = ^tconstset;
-       tconstset = set of 0..255;
+       tconstset = tdynset;
+       pconstset = pdynset;
 
        { Switches which can be changed locally }
        tlocalswitch = (cs_localnone,
@@ -589,7 +592,9 @@ interface
          m_parallelfor,         { run `for parallel [(N)] var i := lo to hi do` body across worker threads }
          m_int128,              { 128 bit integer types Int128/UInt128 with literals beyond 64 bit }
          m_out_var,             { inline out-variable declaration and `_` discard at call sites }
-         m_prepost_incdec       { PreInc/PostInc/PreDec/PostDec intrinsics returning a value }
+         m_prepost_incdec,      { PreInc/PostInc/PreDec/PostDec intrinsics returning a value }
+         m_type_inquiry,        { compile time operator "type of <operand>" }
+         m_record_composition   { enables record composition }
        );
        tmodeswitches = set of tmodeswitch;
 
@@ -822,7 +827,9 @@ interface
          'PARALLELFOR',
          'INT128',
          'OUTVAR',
-         'PREPOSTINCDEC'
+         'PREPOSTINCDEC',
+         'TYPEINQUIRY',
+         'RECORDCOMPOSITION'
          );
 
 
@@ -931,8 +938,8 @@ interface
       TIDString = TSymStr;
 {$endif}
 
-      tnormalset = set of byte; { 256 elements set }
-      pnormalset = ^tnormalset;
+      tnormalset = tdynset; { variable size bitset }
+      pnormalset = pdynset;
 
       pboolean   = ^boolean;
       pdouble    = ^double;

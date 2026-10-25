@@ -14,7 +14,6 @@
  **********************************************************************}
 unit utstRulesParens;
 
-{ The CST-tier PARENTHESIS rule tests }
 
 {$mode objfpc}{$H+}
 
@@ -29,12 +28,10 @@ type
   { CST-tier parenthesis-rule position + registration tests. }
   TParensRulesTest = class(TTestCase)
   private
-    // Runs aRule (taken into a fresh local registry, freed here) over aFixture
-    // with aConfig threaded onto the engine; issues land in aCollector.
+    // Runs aRule over aFixture with aConfig threaded onto the engine.
     procedure RunRule(aRule: TRuleBase; const aFixture: string;
       const aConfig: TFpSonarConfig; const aCollector: TFpSonarIssueCollector);
-    // As RunRule, but the fixture source is supplied inline (one array element
-    // per source line) and materialised to a temp dir for the run.
+    // As RunRule, with the fixture source supplied inline.
     procedure RunRuleSrc(aRule: TRuleBase; const aName: string;
       const aSrc: array of string; const aConfig: TFpSonarConfig;
       const aCollector: TFpSonarIssueCollector);
@@ -44,9 +41,7 @@ type
       const aId: string): Integer;
     // A config carrying rules.RemoveRedundantParentheses.params.keepAroundOperators.
     function KeepAroundConfig(const aValue: string): TFpSonarConfig;
-    // Fresh, separately-owned rule instances (metadata mirrors the unit's
-    // self-registration, including RemoveRedundantParentheses's declared
-    // keepAroundOperators param).
+    // Fresh, separately-owned rule instances.
     function NewRemoveRedundantParentheses: TRuleBase;
     function NewParenthesizeAmbiguousNot: TRuleBase;
   published
@@ -69,7 +64,7 @@ const
   cAmbiguousNotId = 'ParenthesizeAmbiguousNot';
   cDefines: array[0..3] of string = ('FPC', 'CPUX86_64', 'UNIX', 'LINUX');
 
-  // Embedded parenthesis-rule fixtures (Approach A rollout): line i+1 == [i].
+  // Embedded parenthesis-rule fixtures: line i+1 == [i].
 
   cRedundantNoncompliant: array[0..16] of string = (
     'unit noncompliant;',
@@ -233,7 +228,7 @@ var
   lParam: TFpSonarRuleParam;
 
 begin
-  Result := DefaultConfig;
+  Result := TFpSonarConfig.Default;
   lSetting.RuleId := cRedundantId;
   lSetting.HasEnabled := False;
   lSetting.Enabled := True;
@@ -274,9 +269,6 @@ end;
 
 
 // Arm A (cast/call not flagged), arm B (canonical 2 issues) and exact positions.
-// Fixture line 13 'y := (a) + ((b));', line 14
-// 'y := Integer(a);': the '(a)' atom pair and the OUTER of '((b))' fire; the
-// inner pair and the Integer(...) cast do not.
 procedure TParensRulesTest.RedundantSingleAtomAndDoubledFire;
 
 var
@@ -285,7 +277,7 @@ var
 begin
   lc := TFpSonarIssueCollector.Create;
   try
-    RunRuleSrc(NewRemoveRedundantParentheses, 'noncompliant.pas', cRedundantNoncompliant, DefaultConfig, lc);
+    RunRuleSrc(NewRemoveRedundantParentheses, 'noncompliant.pas', cRedundantNoncompliant, TFpSonarConfig.Default, lc);
     AssertEquals('two redundant pairs', 2, CountById(lc, cRedundantId));
     // Arm A: the (a) opening paren at R13 C8.
     AssertEquals('arm A row', 13, lc.Issues[0].StartLine);
@@ -301,9 +293,7 @@ begin
 end;
 
 
-// Necessary/disambiguating parens stay silent: 'a * (b + c)',
-// '(a + b) * c', 'a - (b - c)', a typecast Integer(a), @(a), and a deref '(pi^)'
-// (arm A abstains on '^').
+// Necessary/disambiguating parens stay silent.
 procedure TParensRulesTest.RedundantNecessaryParensAreSilent;
 
 var
@@ -312,7 +302,7 @@ var
 begin
   lc := TFpSonarIssueCollector.Create;
   try
-    RunRuleSrc(NewRemoveRedundantParentheses, 'compliant.pas', cRedundantCompliant, DefaultConfig, lc);
+    RunRuleSrc(NewRemoveRedundantParentheses, 'compliant.pas', cRedundantCompliant, TFpSonarConfig.Default, lc);
     AssertEquals('no redundant findings', 0, CountById(lc, cRedundantId));
   finally
     lc.Free;
@@ -320,8 +310,7 @@ begin
 end;
 
 
-// keepAroundOperators is parsed/accepted (arm C deferred), so a config
-// setting it neither errors nor changes behaviour (still 2 arm A/B findings).
+// keepAroundOperators is parsed and accepted, but inert.
 procedure TParensRulesTest.RedundantKeepAroundOperatorsParsedAndInert;
 
 var
@@ -333,7 +322,7 @@ begin
   try
     // The declared param means a config setting it validates clean (no exit-2).
     AssertTrue('config validates clean',
-      ValidateConfigParams(KeepAroundConfig('+,-'), RuleRegistry, lError));
+      RuleRegistry.ValidateConfig(KeepAroundConfig('+,-'), lError));
     AssertEquals('no validation error', '', lError);
     RunRuleSrc(NewRemoveRedundantParentheses, 'noncompliant.pas', cRedundantNoncompliant, KeepAroundConfig('+,-'), lc);
     AssertEquals('behaviour unchanged', 2, CountById(lc, cRedundantId));
@@ -343,8 +332,7 @@ begin
 end;
 
 
-// Fire + positions. Fixture 'not a and b' / 'not a or b' /
-// 'not x = y' on lines 13/14/15: one issue at each 'not' (R.. C8).
+// Fire + positions: one issue at each 'not' on lines 13/14/15.
 procedure TParensRulesTest.AmbiguousNotFires;
 
 var
@@ -353,7 +341,7 @@ var
 begin
   lc := TFpSonarIssueCollector.Create;
   try
-    RunRuleSrc(NewParenthesizeAmbiguousNot, 'noncompliant.pas', cAmbiguousNotNoncompliant, DefaultConfig, lc);
+    RunRuleSrc(NewParenthesizeAmbiguousNot, 'noncompliant.pas', cAmbiguousNotNoncompliant, TFpSonarConfig.Default, lc);
     AssertEquals('three ambiguous nots', 3, CountById(lc, cAmbiguousNotId));
     AssertEquals('not 1 row', 13, lc.Issues[0].StartLine);
     AssertEquals('not 1 col', 8, lc.Issues[0].StartCol);
@@ -367,8 +355,7 @@ begin
 end;
 
 
-// Compliant nots stay silent: '(not a) and b' (parenthesised),
-// 'not a' (no following operator), 'not Assigned(aObj)' (call operand).
+// Compliant nots stay silent.
 procedure TParensRulesTest.AmbiguousNotCompliantSilent;
 
 var
@@ -377,7 +364,7 @@ var
 begin
   lc := TFpSonarIssueCollector.Create;
   try
-    RunRuleSrc(NewParenthesizeAmbiguousNot, 'compliant.pas', cAmbiguousNotCompliant, DefaultConfig, lc);
+    RunRuleSrc(NewParenthesizeAmbiguousNot, 'compliant.pas', cAmbiguousNotCompliant, TFpSonarConfig.Default, lc);
     AssertEquals('no ambiguous-not findings', 0, CountById(lc, cAmbiguousNotId));
   finally
     lc.Free;
@@ -385,10 +372,8 @@ begin
 end;
 
 
-// Locks the FPC operator-precedence table PrecedenceRank exposes (the heart of
-// ParenHelper): 1 unary, 2 multiplying, 3 adding, 4 relational, 0 non-operator.
-// Scans the ParenthesizeAmbiguousNot fixture (not/and/or/=) plus the
-// RemoveRedundantParentheses compliant fixture (* + -).
+// Locks the FPC operator-precedence table PrecedenceRank exposes: 1 unary,
+// 2 multiplying, 3 adding, 4 relational, 0 non-operator.
 procedure TParensRulesTest.PrecedenceRankMirrorsFpcTable;
 
 var
@@ -406,10 +391,10 @@ begin
   lScanner := TFpSonarScanner.Create;
   try
     lToks := lScanner.ScanFile(
-      lFix.Add('ambiguousnot.pas', cAmbiguousNotNoncompliant), cMode, cDefines);
+      lFix.Add('ambiguousnot.pas', cAmbiguousNotNoncompliant), cMode, cDefines, []);
     for i := 0 to High(lToks) do
       begin
-        if IsKeywordToken(lToks[i]) then
+        if lToks[i].IsKeyword then
           begin
             lWord := LowerCase(lToks[i].Text);
             if lWord = 'not' then
@@ -421,20 +406,20 @@ begin
           end
         else
           begin
-            lPunct := TokenPunct(lToks[i]);
+            lPunct := lToks[i].Punct;
             if lPunct = '=' then
               begin AssertEquals('relational ==4', 4, PrecedenceRank(lToks[i])); lSawEq := True; end
             else if (lPunct = '') and (lToks[i].Text <> '')
-              and not IsNumberToken(lToks[i]) and not IsStringToken(lToks[i]) then
+              and not lToks[i].IsNumber and not lToks[i].IsString then
               begin AssertEquals('identifier=0', 0, PrecedenceRank(lToks[i])); lSawIdent := True; end;
           end;
       end;
 
     lToks := lScanner.ScanFile(
-      lFix.Add('redundant.pas', cRedundantCompliant), cMode, cDefines);
+      lFix.Add('redundant.pas', cRedundantCompliant), cMode, cDefines, []);
     for i := 0 to High(lToks) do
       begin
-        lPunct := TokenPunct(lToks[i]);
+        lPunct := lToks[i].Punct;
         if lPunct = '*' then
           begin AssertEquals('multiplying=2', 2, PrecedenceRank(lToks[i])); lSawStar := True; end
         else if lPunct = '+' then
@@ -464,8 +449,8 @@ begin
   lA := TFpSonarIssueCollector.Create;
   lB := TFpSonarIssueCollector.Create;
   try
-    RunRuleSrc(NewRemoveRedundantParentheses, 'noncompliant.pas', cRedundantNoncompliant, DefaultConfig, lA);
-    RunRuleSrc(NewRemoveRedundantParentheses, 'noncompliant.pas', cRedundantNoncompliant, DefaultConfig, lB);
+    RunRuleSrc(NewRemoveRedundantParentheses, 'noncompliant.pas', cRedundantNoncompliant, TFpSonarConfig.Default, lA);
+    RunRuleSrc(NewRemoveRedundantParentheses, 'noncompliant.pas', cRedundantNoncompliant, TFpSonarConfig.Default, lB);
     AssertEquals('same count', CountById(lA, cRedundantId),
       CountById(lB, cRedundantId));
     AssertEquals('same first row',
@@ -481,8 +466,7 @@ begin
 end;
 
 
-// Both rules self-register into the global registry (convention: assert
-// via FindById, not a brittle total count).
+// Both rules self-register into the global registry.
 procedure TParensRulesTest.ParensRulesSelfRegisterGlobally;
 
 begin

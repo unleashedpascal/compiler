@@ -44,6 +44,7 @@ interface
        private
           resultrealdefderef: tderef;
           function pass_typecheck_internal:tnode;
+          function do_currency_corrections: tnode;
        public
           resultrealdef : tdef;
           addnodeflags : TAddNodeFlags;
@@ -152,6 +153,7 @@ implementation
 {$ELSE}
       fksysutl,
 {$ENDIF}
+      cdynset,
       globtype,systems,constexp,compinnr,
       cutils,verbose,globals,widestr,
       tokens,
@@ -869,14 +871,17 @@ const
         c1,c2   : array[0..1] of char;
         s1,s2,stmp   : pchar;
         l1,l2   : longint;
-        resultset : Tconstset;
+        resultset : TDynSet;
         res,
         b       : boolean;
         cr, cl  : Tconstexprint;
         v2p, c2p, c1p, v1p: pnode;
         p1,p2: TConstPtrUInt;
       begin
-        result:=nil;
+        result:=do_currency_corrections;
+        if Assigned(result) then
+          Exit;
+
         l1:=0;
         l2:=0;
         s1:=nil;
@@ -943,6 +948,15 @@ const
              lv:=get_int_value(left);
              rv:=get_int_value(right);
 
+             { Fix the currency scaling if, out of left and right, the
+               nf_is_currency flag is set, but not for both }
+             if (nf_is_currency in left.flags) and
+               not (nf_is_currency in right.flags) then
+               rv:=rv*10000
+             else if (nf_is_currency in right.flags) and
+               not (nf_is_currency in left.flags) then
+               lv:=lv*10000;
+
              { type checking already took care of multiplying      }
              { integer constants with pointeddef.size if necessary }
              case nodetype of
@@ -966,12 +980,17 @@ const
                          end
                      end
                    else if is_constpointernode(left) or is_constpointernode(right) then
-                     t := cpointerconstnode.create(qword(v),resultdef)
+                     t:=cpointerconstnode.create(qword(v),resultdef)
                    else
-                     if is_integer(ld) then
-                       t := create_simplified_ord_const(v,resultdef,forinline,cs_check_overflow in localswitches)
-                     else
-                       t := cordconstnode.create(v,resultdef,(ld.typ<>enumdef));
+                     begin
+                       if is_integer(ld) then
+                         t:=create_simplified_ord_const(v,resultdef,forinline,cs_check_overflow in localswitches)
+                       else
+                         t:=cordconstnode.create(v,resultdef,(ld.typ<>enumdef));
+                     end;
+
+                   if is_currency(resultdef) then
+                     Include(t.flags,nf_is_currency);
                  end;
                subn :
                  begin
@@ -1002,10 +1021,15 @@ const
                      else
                        t:=cpointerconstnode.create(qword(v),resultdef)
                    else
-                     if is_integer(ld) then
-                       t:=create_simplified_ord_const(v,resultdef,forinline,cs_check_overflow in localswitches)
-                     else
-                       t:=cordconstnode.create(v,resultdef,(ld.typ<>enumdef));
+                     begin
+                       if is_integer(ld) then
+                         t:=create_simplified_ord_const(v,resultdef,forinline,cs_check_overflow in localswitches)
+                       else
+                         t:=cordconstnode.create(v,resultdef,(ld.typ<>enumdef));
+                     end;
+
+                   if is_currency(resultdef) then
+                     Include(t.flags,nf_is_currency);
                  end;
                muln :
                  begin
@@ -1024,23 +1048,54 @@ const
                          end
                      end
                    else
-                     t := create_simplified_ord_const(v,resultdef,forinline,cs_check_overflow in localswitches)
+                     begin
+                       { If both are currency, we have to remove one of the
+                         scalars}
+                       if is_currency(resultdef) then
+                         begin
+                           v:=v div 10000;
+
+                           if not (nf_is_currency in flags) then
+                             { We have to remove both scalars in this case }
+                             v:=v div 10000;
+                         end;
+
+                       t:=create_simplified_ord_const(v,resultdef,forinline,cs_check_overflow in localswitches);
+
+                       if is_currency(resultdef) then
+                         Include(t.flags,nf_is_currency);
+                     end;
                  end;
                xorn :
-                 if is_integer(ld) then
-                   t := create_simplified_ord_const(lv xor rv,resultdef,forinline,false)
-                 else
-                   t:=cordconstnode.create(lv xor rv,resultdef,true);
+                 begin
+                   if is_integer(ld) then
+                     t:=create_simplified_ord_const(lv xor rv,resultdef,forinline,false)
+                   else
+                     t:=cordconstnode.create(lv xor rv,resultdef,true);
+
+                   if is_currency(resultdef) then
+                     Include(t.flags,nf_is_currency);
+                 end;
                orn :
-                 if is_integer(ld) then
-                   t:=create_simplified_ord_const(lv or rv,resultdef,forinline,false)
-                 else
-                   t:=cordconstnode.create(lv or rv,resultdef,true);
+                 begin
+                   if is_integer(ld) then
+                     t:=create_simplified_ord_const(lv or rv,resultdef,forinline,false)
+                   else
+                     t:=cordconstnode.create(lv or rv,resultdef,true);
+
+                   if is_currency(resultdef) then
+                     Include(t.flags,nf_is_currency);
+                 end;
                andn :
-                 if is_integer(ld) then
-                   t:=create_simplified_ord_const(lv and rv,resultdef,forinline,false)
-                 else
-                   t:=cordconstnode.create(lv and rv,resultdef,true);
+                 begin
+                   if is_integer(ld) then
+                     t:=create_simplified_ord_const(lv and rv,resultdef,forinline,false)
+                   else
+                     t:=cordconstnode.create(lv and rv,resultdef,true);
+
+                   if is_currency(resultdef) then
+                     Include(t.flags,nf_is_currency);
+                 end;
                ltn :
                  t:=cordconstnode.create(ord(lv<rv),pasbool1type,true);
                lten :
@@ -1058,6 +1113,16 @@ const
                    { int/int becomes a real }
                    rvd:=rv;
                    lvd:=lv;
+
+                   { With currency, we may have to apply a scalar.  If both
+                     are currency, the scalars cancel out and are not required }
+                   if (nf_is_currency in left.flags) and
+                     not (nf_is_currency in right.flags) then
+                     lvd:=lvd/BestReal(10000.0)
+                   else if (nf_is_currency in right.flags) and
+                     not (nf_is_currency in left.flags) then
+                     rvd:=rvd/BestReal(10000.0);
+
                    t:=crealconstnode.create(lvd/rvd,resultrealdef);
                  end;
                else
@@ -1213,11 +1278,54 @@ const
              rvd:=trealconstnode(right).value_real;
              case nodetype of
                 addn :
-                  t:=crealconstnode.create(lvd+rvd,resultrealdef);
+                  begin
+                    t:=crealconstnode.create(lvd+rvd,resultrealdef);
+                    if nf_is_currency in flags then
+                      include(t.flags,nf_is_currency);
+                  end;
                 subn :
-                  t:=crealconstnode.create(lvd-rvd,resultrealdef);
+                  begin
+                    t:=crealconstnode.create(lvd-rvd,resultrealdef);
+                    if nf_is_currency in flags then
+                      include(t.flags,nf_is_currency);
+                  end;
                 muln :
-                  t:=crealconstnode.create(lvd*rvd,resultrealdef);
+                  begin
+                    if (nf_is_currency in flags) then
+                      begin
+                        if (nf_is_currency in left.flags) and
+                          (nf_is_currency in right.flags) then
+                          begin
+                            { Need to remove one of the scalars }
+                            rvd:=rvd/BestReal(10000.0);
+                            if not (nf_is_currency in flags) then
+                              { Make that both }
+                              lvd:=lvd/BestReal(10000.0);
+                          end
+                        else if not (nf_is_currency in left.flags) and
+                          not (nf_is_currency in right.flags) then
+                          begin
+                            { We actually lack a scalar - try to scale
+                              the smallest to minimise precision errors }
+                            if (abs(rvd) > abs(lvd)) then
+                              lvd:=lvd*BestReal(10000.0)
+                            else
+                              rvd:=rvd*BestReal(10000.0);
+                          end;
+                      end
+                    else
+                      begin
+                        { Clear any scalars }
+                        if (nf_is_currency in left.flags) then
+                          lvd:=lvd/BestReal(10000.0);
+                        if (nf_is_currency in right.flags) then
+                          rvd:=rvd/BestReal(10000.0);
+                      end;
+
+                    t:=crealconstnode.create(lvd*rvd,resultrealdef);
+                    if nf_is_currency in flags then
+                      include(t.flags,nf_is_currency);
+                  end;
                 starstarn:
                   begin
                     if lvd<0 then
@@ -1231,7 +1339,24 @@ const
                       t:=crealconstnode.create(exp(ln(lvd)*rvd),resultrealdef);
                   end;
                 slashn :
-                  t:=crealconstnode.create(lvd/rvd,resultrealdef);
+                  begin
+                    if (nf_is_currency in flags) and
+                      (nf_is_currency in left.flags) and
+                      (nf_is_currency in right.flags) then
+                      begin
+                        { Need to put one of the scalars back }
+                        t:=crealconstnode.create((lvd/rvd)*BestReal(10000.0),resultrealdef);
+                        Include(t.flags,nf_is_currency);
+                      end
+                    else
+                      begin
+                        t:=crealconstnode.create(lvd/rvd,resultrealdef);
+
+                        if (nf_is_currency in left.flags) and
+                          not (nf_is_currency in right.flags) then
+                          include(t.flags,nf_is_currency);
+                      end;
+                  end;
                 ltn :
                   t:=cordconstnode.create(ord(lvd<rvd),pasbool1type,true);
                 lten :
@@ -1248,8 +1373,6 @@ const
                   internalerror(2008022102);
              end;
              result:=t;
-             if nf_is_currency in flags then
-               include(result.flags,nf_is_currency);
              exit;
           end;
 
@@ -1406,15 +1529,18 @@ const
                (tfloatdef(rd).floattype=s64comp)
               )
           ) and
-          (((cs_opt_fastmath in current_settings.optimizerswitches) and (rt=ordconstn)) or
-           ((cs_opt_fastmath in current_settings.optimizerswitches) and (rt=realconstn) and
-            (bestrealrec(trealconstnode(right).value_real).SpecialType in [fsPositive,fsNegative])
+          (((rt=ordconstn) and
+            ((cs_opt_fastmath in current_settings.optimizerswitches) or
+             (PopCnt(tordconstnode(right).value.uvalue)=1)) { Power of two }
            ) or
            ((rt=realconstn) and
             (bestrealrec(trealconstnode(right).value_real).SpecialType in [fsPositive,fsNegative]) and
-            { mantissa returns the mantissa/fraction without the hidden 1, so power of two means only the hidden
-              bit is set => mantissa must be 0 }
-            (bestrealrec(trealconstnode(right).value_real).Mantissa=0)
+            (
+             (cs_opt_fastmath in current_settings.optimizerswitches) or
+             { mantissa returns the mantissa/fraction without the hidden 1, so power of two means only the hidden
+               bit is set => mantissa must be 0 }
+             (bestrealrec(trealconstnode(right).value_real).Mantissa=0)
+            )
            )
           ) then
           case rt of
@@ -1434,6 +1560,8 @@ const
               begin
                 nodetype:=muln;
                 trealconstnode(right).value_real:=1.0/trealconstnode(right).value_real;
+                if nf_is_currency in right.flags then
+                  Exclude(right.flags,nf_is_currency);
                 exit;
               end;
             else
@@ -1569,42 +1697,42 @@ const
              case nodetype of
                addn :
                  begin
-                   resultset:=tsetconstnode(right).value_set^ + tsetconstnode(left).value_set^;
+                   resultset:=DynSetUnionF(tsetconstnode(right).value_set, tsetconstnode(left).value_set);
                    t:=csetconstnode.create(@resultset,resultdef);
                  end;
                 muln :
                   begin
-                    resultset:=tsetconstnode(right).value_set^ * tsetconstnode(left).value_set^;
+                    resultset:=DynSetIntersectF(tsetconstnode(right).value_set, tsetconstnode(left).value_set);
                     t:=csetconstnode.create(@resultset,resultdef);
                   end;
                subn :
                   begin
-                    resultset:=tsetconstnode(left).value_set^ - tsetconstnode(right).value_set^;
+                    resultset:=DynSetDiffF(tsetconstnode(left).value_set, tsetconstnode(right).value_set);
                             t:=csetconstnode.create(@resultset,resultdef);
                   end;
                symdifn :
                   begin
-                    resultset:=tsetconstnode(right).value_set^ >< tsetconstnode(left).value_set^;
+                    resultset:=DynSetSymDifF(tsetconstnode(right).value_set, tsetconstnode(left).value_set);
                         t:=csetconstnode.create(@resultset,resultdef);
                   end;
                unequaln :
                   begin
-                    b:=tsetconstnode(right).value_set^ <> tsetconstnode(left).value_set^;
+                    b:=not DynSetEqual(tsetconstnode(right).value_set, tsetconstnode(left).value_set);
                     t:=cordconstnode.create(byte(b),pasbool1type,true);
                   end;
                equaln :
                   begin
-                    b:=tsetconstnode(right).value_set^ = tsetconstnode(left).value_set^;
+                    b:=DynSetEqual(tsetconstnode(right).value_set, tsetconstnode(left).value_set);
                     t:=cordconstnode.create(byte(b),pasbool1type,true);
                   end;
                lten :
                   begin
-                    b:=tsetconstnode(left).value_set^ <= tsetconstnode(right).value_set^;
+                    b:=DynSetSubset(tsetconstnode(left).value_set, tsetconstnode(right).value_set);
                     t:=cordconstnode.create(byte(b),pasbool1type,true);
                   end;
                gten :
                   begin
-                    b:=tsetconstnode(left).value_set^ >= tsetconstnode(right).value_set^;
+                    b:=DynSetSubset(tsetconstnode(right).value_set, tsetconstnode(left).value_set);
                     t:=cordconstnode.create(byte(b),pasbool1type,true);
                   end;
                 else
@@ -2663,8 +2791,42 @@ const
                 (nodetype <> slashn)) then
              begin
                resultrealdef:=s64currencytype;
-               inserttypeconv(right,resultrealdef);
-               inserttypeconv(left,resultrealdef);
+               if (nodetype = muln) then
+                 begin
+                   { See if we can minimise any unnecessary scaling that might
+                     cause precision problems }
+                   if (nf_is_currency in right.flags) then
+                     begin
+                       if (nf_is_currency in left.flags) then
+                         begin
+                           inserttypeconv(right,resultrealdef);
+                           inserttypeconv(left,resultrealdef);
+                         end
+                       else
+                         begin
+                           inserttypeconv(right,resultrealdef);
+                           inserttypeconv_internal(left,resultrealdef)
+                         end;
+                     end
+                   else
+                     begin
+                       if (nf_is_currency in left.flags) then
+                         begin
+                           inserttypeconv_internal(right,resultrealdef);
+                           inserttypeconv(left,resultrealdef);
+                         end
+                       else
+                         begin
+                           inserttypeconv(right,resultrealdef);
+                           inserttypeconv(left,resultrealdef);
+                         end;
+                     end;
+                 end
+               else
+                 begin
+                   inserttypeconv(right,resultrealdef);
+                   inserttypeconv(left,resultrealdef);
+                 end;
              end
            else
             begin
@@ -2937,10 +3099,32 @@ const
              { is there a currency type ? }
              else if ((torddef(rd).ordtype=scurrency) or (torddef(ld).ordtype=scurrency)) then
                begin
-                  if (torddef(ld).ordtype<>scurrency) then
-                   inserttypeconv(left,s64currencytype);
-                  if (torddef(rd).ordtype<>scurrency) then
-                   inserttypeconv(right,s64currencytype);
+                 if (nodetype=muln) and
+                   { Is only one currency? }
+                   (
+                     (torddef(ld).ordtype=scurrency) xor (torddef(rd).ordtype=scurrency)
+                   ) then
+                   begin
+                     { Don't actually set the nf_is_currency flag, as it doesn't
+                       need scaling }
+                     if (torddef(ld).ordtype<>scurrency) then
+                       begin
+                         left:=ctypeconvnode.create_internal(left,s64currencytype);
+                         typecheckpass(left);
+                       end
+                     else
+                       begin
+                         right:=ctypeconvnode.create_internal(right,s64currencytype);
+                         typecheckpass(right);
+                       end;
+                   end
+                 else
+                   begin
+                     if (torddef(ld).ordtype<>scurrency) then
+                       inserttypeconv(left,s64currencytype);
+                     if (torddef(rd).ordtype<>scurrency) then
+                       inserttypeconv(right,s64currencytype);
+                   end;
                end
              { leave some constant integer expressions alone in case the
                resultdef of the integer types doesn't influence the outcome,
@@ -3749,101 +3933,305 @@ const
              end;
           end;
 
-         { when the result is currency we need some extra code for
-           multiplication and division. this should not be done when
-           the muln or slashn node is created internally }
-         if not(nf_is_currency in flags) and
-            is_currency(resultdef) then
+         result:=do_currency_corrections;
+
+         if not(codegenerror) and
+            not assigned(result) then
+           begin
+             if not (nf_internal in flags) and
+               (nf_is_currency in left.flags) and
+               (nf_is_currency in right.flags) and
+               (nodetype in [addn,subn,muln]) then
+               Include(flags,nf_is_currency);
+
+             result:=simplify(false);
+           end;
+      end;
+
+
+    function taddnode.do_currency_corrections: tnode;
+      var
+        hp: tnode;
+        procname: string[31];
+      begin
+        result:=nil;
+        hp:=nil;
+        { when the result is currency we need some extra code to make sure
+           the comparisons are scaled properly. this should not be done when
+           a muln or slashn node is created internally }
+        if not(nf_internal in flags) and
+          { Can't go by the node's resultdef in the case of comparisons }
+          (
+            is_currency(left.resultdef) or
+            is_currency(right.resultdef)
+          ) then
           begin
             case nodetype of
               slashn :
-                begin
-                  { slashn will only work with floats }
-                  hp:=caddnode.create(muln,getcopy,crealconstnode.create(10000.0,s64currencytype));
-                  include(hp.flags,nf_is_currency);
-                  result:=hp;
-                end;
-              muln :
-                begin
-                  hp:=nil;
-                  if s64currencytype.typ=floatdef then
-                    begin
-                      { if left is a currency integer constant, we can get rid of the factor 10000 }
-                      { int64(...) causes a cast on currency, so it is the currency value multiplied by 10000 }
-                      if (left.nodetype=realconstn) and (is_currency(left.resultdef)) and (not(nf_is_currency in left.flags)) and ((trunc(trealconstnode(left).value_real) mod 10000)=0) then
-                        begin
-                          { trealconstnode expects that value_real and value_currency contain valid values }
-{$ifdef FPC_CURRENCY_IS_INT64}
-                          trealconstnode(left).value_currency:=pint64(@(trealconstnode(left).value_currency))^ div 10000;
-{$else}
-                          trealconstnode(left).value_currency:=trealconstnode(left).value_currency / 10000;
-{$endif}
-                          trealconstnode(left).value_real:=trealconstnode(left).value_real/10000;
-                        end
-                      { or if right is an integer constant, we can get rid of its factor 10000 }
-                      else if (right.nodetype=realconstn) and (is_currency(right.resultdef)) and (not(nf_is_currency in right.flags)) and ((trunc(trealconstnode(right).value_real) mod 10000)=0) then
-                        begin
-                          { trealconstnode expects that value and value_currency contain valid values }
-{$ifdef FPC_CURRENCY_IS_INT64}
-                          trealconstnode(right).value_currency:=pint64(@(trealconstnode(right).value_currency))^ div 10000;
-{$else}
-                          trealconstnode(right).value_currency:=trealconstnode(right).value_currency / 10000;
-{$endif}
-                          trealconstnode(right).value_real:=trealconstnode(right).value_real/10000;
-                        end
-                      else
-                        begin
-                          hp:=caddnode.create(slashn,getcopy,crealconstnode.create(10000.0,s64currencytype));
-                          include(hp.flags,nf_is_currency);
-                        end;
-                    end
-                  else
-                    begin
-                      { if left is a currency integer constant, we can get rid of the factor 10000 }
-                      if (left.nodetype=ordconstn) and (is_currency(left.resultdef)) and ((tordconstnode(left).value mod 10000)=0) then
-                        tordconstnode(left).value:=tordconstnode(left).value div 10000
-                      { or if right is an integer constant, we can get rid of its factor 10000 }
-                      else if (right.nodetype=ordconstn) and (is_currency(right.resultdef)) and ((tordconstnode(right).value mod 10000)=0) then
-                        tordconstnode(right).value:=tordconstnode(right).value div 10000
-                      else if (right.nodetype=muln) and is_currency(right.resultdef) and
-                        { do not test swapped here as the internal conversions are only create as "var."*"10000" }
-                        is_currency(taddnode(right).right.resultdef)  and (taddnode(right).right.nodetype=ordconstn) and (tordconstnode(taddnode(right).right).value=10000) and
-                        is_currency(taddnode(right).left.resultdef) and (taddnode(right).left.nodetype=typeconvn) then
-                        begin
-                          hp:=taddnode(right).left.getcopy;
-                          include(hp.flags,nf_is_currency);
-                          right.free;
-                          right:=hp;
-                          hp:=nil;
-                        end
-                      else if (left.nodetype=muln) and is_currency(left.resultdef) and
-                        { do not test swapped here as the internal conversions are only create as "var."*"10000" }
-                        is_currency(taddnode(left).right.resultdef)  and (taddnode(left).right.nodetype=ordconstn) and (tordconstnode(taddnode(left).right).value=10000) and
-                        is_currency(taddnode(left).left.resultdef) and (taddnode(left).left.nodetype=typeconvn) then
-                        begin
-                          hp:=taddnode(left).left.getcopy;
-                          include(hp.flags,nf_is_currency);
-                          left.free;
-                          left:=hp;
-                          hp:=nil;
-                        end
-                      else
-                        begin
-                          hp:=cmoddivnode.create(divn,getcopy,cordconstnode.create(10000,s64currencytype,false));
-                          include(hp.flags,nf_is_currency);
-                        end
-                    end;
+                if (
+                    (nf_is_currency in flags) and
+                    { Equivalence... both true or both false }
+                    not ((nf_is_currency in left.flags) xor (nf_is_currency in right.flags))
+                  ) then
+                  begin
+                    { slashn will only work with floats }
+                    Exclude(flags,nf_is_currency);
+                    Include(flags,nf_internal); { Prevent recursion }
+                    hp:=caddnode.create_internal(muln,getcopy,crealconstnode.create_currency_scalar(s64currencytype));
+                    include(hp.flags,nf_is_currency);
+                    result:=hp;
+                  end
+                else if not (nf_is_currency in flags) then
+                  begin
+                    if (
+                      not (nf_is_currency in left.flags) and
+                      (nf_is_currency in right.flags)
+                    ) then
+                      begin
+                        { Put a multiplier on the left side }
+                        left:=caddnode.create_internal(muln,left,crealconstnode.create_currency_scalar(s64currencytype));
+                        include(left.flags,nf_is_currency);
+                        typecheckpass(left);
+                      end
+                    else if (
+                        (nf_is_currency in left.flags) and
+                        not (nf_is_currency in right.flags)
+                      ) then
+                      { All the scalars are correct, so mark it so }
+                      Include(flags,nf_is_currency);
+                  end;
 
-                  result:=hp
-                end;
+              muln :
+                if (nf_is_currency in flags) then
+                  begin
+                    if (nf_is_currency in left.flags) and (nf_is_currency in right.flags) then
+                      begin
+                        if s64currencytype.typ=floatdef then
+                          begin
+                            { Probably a Currency constant with a fractional component }
+                            if (right.nodetype=realconstn) and (nf_internal in right.flags) then
+                              begin
+                                left:=caddnode.create_internal(slashn,left,crealconstnode.create_currency_scalar(s64currencytype));
+                                do_typecheckpass(left);
+                              end
+                            else
+                              begin
+                                right:=caddnode.create_internal(slashn,right,crealconstnode.create_currency_scalar(s64currencytype));
+                                do_typecheckpass(right);
+                              end;
+                          end
+                        else
+                          begin
+                            { Probably a Currency constant with a fractional component }
+                            if (right.nodetype=realconstn) and (nf_internal in right.flags) then
+                              begin
+                                left:=cmoddivnode.create(divn,left,cordconstnode.create_currency_scalar(s64currencytype));
+                                Include(left.flags,nf_internal);
+                                do_typecheckpass(left);
+                              end
+                            else
+                              begin
+                                right:=cmoddivnode.create(divn,right,cordconstnode.create_currency_scalar(s64currencytype));
+                                Include(right.flags,nf_internal);
+                                do_typecheckpass(right);
+                              end;
+                          end;
+
+                        { We need to force a re-evaluation }
+                        result:=getcopy;
+                      end
+                    else if not (nf_is_currency in left.flags) and not (nf_is_currency in right.flags) then
+                      begin
+                        result:=getcopy;
+                        { Prevent recursion }
+                        Include(result.flags,nf_internal);
+
+                        if s64currencytype.typ=floatdef then
+                          hp:=caddnode.create_internal(muln,result,crealconstnode.create_currency_scalar(s64currencytype))
+                        else
+                          hp:=caddnode.create_internal(muln,result,cordconstnode.create_currency_scalar(s64currencytype));
+                        { Because the multiplication doubles up on the currency scalar, dividing
+                          removes only one and hence the result is still scaled }
+                        Include(hp.flags,nf_is_currency);
+                        result:=hp;
+                      end;
+                  end
+                else
+                  begin
+                    if s64currencytype.typ=floatdef then
+                      begin
+                        { if left is a currency integer constant, we can get rid of the factor 10000 }
+                        { int64(...) causes a cast on currency, so it is the currency value multiplied by 10000 }
+                        if (left.nodetype=realconstn) and (is_currency(left.resultdef)) and (nf_is_currency in left.flags) and ((trunc(trealconstnode(left).value_real) mod 10000)=0) then
+                          begin
+                            { trealconstnode expects that value_real and value_currency contain valid values }
+{$ifdef FPC_CURRENCY_IS_INT64}
+                            trealconstnode(left).value_currency:=pint64(@(trealconstnode(left).value_currency))^ div 10000;
+{$else}
+                            trealconstnode(left).value_currency:=trealconstnode(left).value_currency/BestReal(10000.0);
+{$endif}
+                            trealconstnode(left).value_real:=trealconstnode(left).value_real/BestReal(10000.0);
+                            Exclude(left.flags,nf_is_currency);
+                            Include(flags,nf_is_currency);
+
+                            { We need to force a re-evaluation }
+                            hp:=getcopy;
+                          end
+                        { or if right is an integer constant, we can get rid of its factor 10000 }
+                        else if (right.nodetype=realconstn) and (is_currency(right.resultdef)) and (nf_is_currency in right.flags) and ((trunc(trealconstnode(right).value_real) mod 10000)=0) then
+                          begin
+                            { trealconstnode expects that value and value_currency contain valid values }
+{$ifdef FPC_CURRENCY_IS_INT64}
+                            trealconstnode(right).value_currency:=pint64(@(trealconstnode(right).value_currency))^ div 10000;
+{$else}
+                            trealconstnode(right).value_currency:=trealconstnode(right).value_currency/BestReal(10000.0);
+{$endif}
+                            trealconstnode(right).value_real:=trealconstnode(right).value_real/BestReal(10000.0);
+                            Exclude(right.flags,nf_is_currency);
+                            Include(flags,nf_is_currency);
+
+                            { We need to force a re-evaluation }
+                            hp:=getcopy;
+                          end
+                        else if (nf_is_currency in left.flags) xor (nf_is_currency in right.flags) then
+                          begin
+                            { If one is scaled and one isn't, then the result is scaled }
+                            Include(flags,nf_is_currency);
+                          end
+                        else if (nf_is_currency in left.flags) and (nf_is_currency in right.flags) then
+                          begin
+                            Include(flags,nf_is_currency);
+                            right:=caddnode.create_internal(slashn,right,crealconstnode.create_currency_scalar(s64currencytype));
+                            { Because the multiplication doubles up on the currency scalar, dividing
+                              removes only one and hence the result is still scaled }
+                            do_typecheckpass(right);
+
+                            { We need to force a re-evaluation }
+                            hp:=getcopy;
+                          end;
+                      end
+                    else
+                      begin
+                        { if left is a currency integer constant, we can get rid of the factor 10000 }
+                        if (left.nodetype=ordconstn) and (is_currency(left.resultdef)) and (nf_is_currency in left.flags) and ((tordconstnode(left).value mod 10000)=0) then
+                          begin
+                            tordconstnode(left).value:=tordconstnode(left).value div 10000;
+                            Exclude(left.flags,nf_is_currency);
+                            Include(flags,nf_is_currency);
+
+                            { We need to force a re-evaluation }
+                            hp:=getcopy;
+                          end
+                        { or if right is an integer constant, we can get rid of its factor 10000 }
+                        else if (right.nodetype=ordconstn) and (is_currency(right.resultdef)) and (nf_is_currency in right.flags) and ((tordconstnode(right).value mod 10000)=0) then
+                          begin
+                            tordconstnode(right).value:=tordconstnode(right).value div 10000;
+                            Exclude(right.flags,nf_is_currency);
+                            Include(flags,nf_is_currency);
+
+                            { We need to force a re-evaluation }
+                            hp:=getcopy;
+                          end
+
+                        else if (right.nodetype=muln) and is_currency(right.resultdef) and (nf_is_currency in right.flags) and
+                          { do not test swapped here as the internal conversions are only create as "var."*"10000" }
+                          is_currency(taddnode(right).right.resultdef) and (taddnode(right).right.nodetype=ordconstn) and (tordconstnode(taddnode(right).right).value=10000) and
+                          is_currency(taddnode(right).left.resultdef) and not (nf_is_currency in taddnode(right).left.flags) and (taddnode(right).left.nodetype=typeconvn) then
+                          begin
+                            hp:=taddnode(right).left.getcopy;
+                            right.free;
+                            right:=hp;
+
+                            { We need to force a re-evaluation }
+                            hp:=getcopy;
+                          end
+                        else if (left.nodetype=muln) and is_currency(left.resultdef) and
+                          { do not test swapped here as the internal conversions are only create as "var."*"10000" }
+                          is_currency(taddnode(left).right.resultdef) and (taddnode(left).right.nodetype=ordconstn) and (tordconstnode(taddnode(left).right).value=10000) and
+                          is_currency(taddnode(left).left.resultdef) and not (nf_is_currency in taddnode(left).left.flags) and (taddnode(left).left.nodetype=typeconvn) then
+                          begin
+                            hp:=taddnode(left).left.getcopy;
+                            left.free;
+                            left:=hp;
+
+                            { We need to force a re-evaluation }
+                            hp:=getcopy;
+                          end
+                        else if (nf_is_currency in left.flags) xor (nf_is_currency in right.flags) then
+                          begin
+                            { If one is scaled and one isn't, then the result is scaled }
+                            Include(flags,nf_is_currency);
+                          end
+                        else if (nf_is_currency in left.flags) and (nf_is_currency in right.flags) then
+                          begin
+                            { The Int64-based Currency implementation (used e.g. on
+                              Win64, where x87 extended types are not supported) can
+                              NOT be safely done as a plain 64-bit "multiply, then
+                              divide by 10000": both operands here are already scaled
+                              by 10000, so their raw product can overflow a 64-bit
+                              integer even for operands that are themselves well
+                              within Currency's legal range (e.g. 9500000.0004 *
+                              10000). Route through a helper that computes the
+                              product and the rescaling division using a full
+                              128-bit intermediate result, instead of building
+                              generic muln+divn nodes that truncate to 64 bits
+                              in between.
+                            }
+                            procname := 'fpc_mul_currency';
+                            if cs_check_overflow in current_settings.localswitches then
+                              procname := procname + '_checkoverflow';
+                            hp:=ccallnode.createintern(procname,ccallparanode.create(right,ccallparanode.create(left,nil)));
+                            Include(hp.flags,nf_is_currency);
+                            left:=nil;
+                            right:=nil;
+                          end;
+                      end;
+
+                    result:=hp;
+                  end;
+              addn,
+              subn,
+              ltn,
+              lten,
+              gtn,
+              gten,
+              equaln,
+              unequaln:
+                { Correct absence of nf_is_currency flag in addn and subn }
+                if not
+                  (
+                    (nf_is_currency in left.flags) and
+                    (nf_is_currency in right.flags)
+                  ) then
+                  begin
+                    { Sort out problems with only one side being scaled }
+                    if not (nf_is_currency in right.flags) then
+                      begin
+                        if s64currencytype.typ = floatdef then
+                          right:=caddnode.create_internal(muln,right,crealconstnode.create_currency_scalar(s64currencytype))
+                        else
+                          right:=caddnode.create_internal(muln,right,cordconstnode.create_currency_scalar(s64currencytype));
+                        Include(right.flags,nf_is_currency);
+                        typecheckpass(right);
+                        firstpass(right);
+                        Include(right.flags,nf_is_currency);
+                      end;
+                    if not (nf_is_currency in left.flags) then
+                      begin
+                        if s64currencytype.typ = floatdef then
+                          left:=caddnode.create_internal(muln,left,crealconstnode.create_currency_scalar(s64currencytype))
+                        else
+                          left:=caddnode.create_internal(muln,left,cordconstnode.create_currency_scalar(s64currencytype));
+                        Include(left.flags,nf_is_currency);
+                        typecheckpass(left);
+                        firstpass(left);
+                        Include(left.flags,nf_is_currency);
+                      end;
+                  end;
               else
                 ;
             end;
           end;
-
-         if not(codegenerror) and
-            not assigned(result) then
-           result:=simplify(false);
       end;
 
 
@@ -5106,8 +5494,8 @@ const
                  if not(might_have_sideeffects(varsetnode)) then
                    begin
                      result:=nil;
-                     for i:=low(tconstset) to high(tconstset) do
-                       if i in constsetnode.value_set^ then
+                     for i:=0 to length(constsetnode.value_set)*8-1 do
+                       if DynSetIn(constsetnode.value_set, i) then
                          begin
                            tempn:=cinnode.create(cordconstnode.create(i,tsetdef(constsetnode.resultdef).elementdef,false),varsetnode.getcopy);
                            if assigned(result) then
@@ -5163,6 +5551,7 @@ const
              { optimize multiplication by a power of 2 }
              if not(cs_check_overflow in current_settings.localswitches) and
                 (nodetype = muln) and
+                not is_currency(resultdef) and
                 (((left.nodetype = ordconstn) and
                   ispowerof2(tordconstnode(left).value,i)) or
                  ((right.nodetype = ordconstn) and

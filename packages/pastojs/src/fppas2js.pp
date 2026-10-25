@@ -1358,7 +1358,9 @@ const
     msMultiHelpers,
     msImplicitFunctionSpec,
     msMultilineStrings,
-    msDelphiMultilineStrings];
+    msDelphiMultilineStrings,
+    msStatementExpressions,
+    msTypeInquiry];
 
   bsAllPas2jsBoolSwitchesReadOnly = [
     bsLongStrings
@@ -1808,6 +1810,7 @@ type
     Element: TPasElement;
     Name: string;
     Kind: TCtxVarKind;
+    Hoisted: boolean; // true if it needs a "var name;" at the start of the function
     constructor Create(const aName: string; TheEl: TPasElement; aKind: TCtxVarKind);
   end;
   TFCLocalVars = array of TFCLocalIdentifier;
@@ -1831,6 +1834,8 @@ type
     destructor Destroy; override;
     function AddLocalVar(aName: string; El: TPasElement; aKind: TCtxVarKind; AutoUnique: boolean): TFCLocalIdentifier;
     function AddLocalJSVar(aName: string; AutoUnique: boolean): TFCLocalIdentifier;
+    function AddHoistedJSVar(const aName: string): string;
+    function HasHoistedVars: boolean;
     procedure Add_InterfaceRelease(El: TPasElement);
     function CreateLocalIdentifier(const Prefix: string; El: TPasElement; aKind: TCtxVarKind): string; virtual;
     function ToString: string; override;
@@ -2255,6 +2260,8 @@ type
     Procedure AddInFrontOfFunctionTry(NewEl: TJSElement; PosEl: TPasElement;
       FuncContext: TFunctionContext); virtual;
     Procedure AddInterfaceReleases(FuncContext: TFunctionContext; PosEl: TPasElement); virtual;
+    Function PrependHoistedVars(FuncContext: TFunctionContext; First: TJSElement; PosEl: TPasElement): TJSElement; virtual;
+    Procedure AddHoistedVarsToSource(FuncContext: TFunctionContext; Src: TJSSourceElements; PosEl: TPasElement); virtual;
     Procedure AddInterfaceRelease_Result(FuncContext: TFunctionContext;
       const ResultVarName: string; PosEl: TPasElement); virtual;
     Procedure AddClassSupportedInterfaces(El: TPasClassType; Src: TJSSourceElements;
@@ -2283,6 +2290,7 @@ type
     Function ConvertWithStatement(El: TPasImplWithDo; AContext: TConvertContext): TJSElement; virtual;
     Function ConvertTryStatement(El: TPasImplTry; AContext: TConvertContext ): TJSElement; virtual;
     Function ConvertExceptOn(El: TPasImplExceptOn; AContext: TConvertContext): TJSElement;
+    Function CreateExceptOnCondition(TypeEl: TPasType; PosEl: TPasElement; AContext: TConvertContext): TJSElement; virtual;
     Function ConvertCaseOfStatement(El: TPasImplCaseOf; AContext: TConvertContext): TJSElement;
     Function ConvertAsmStatement(El: TPasImplAsmStatement; AContext: TConvertContext): TJSElement;
     // Expressions
@@ -2328,6 +2336,8 @@ type
     Function ConvertBuiltIn_DeleteArray(El: TParamsExpr; AContext: TConvertContext): TJSElement; virtual;
     Function ConvertBuiltIn_TypeInfo(El: TParamsExpr; AContext: TConvertContext): TJSElement; virtual;
     Function ConvertBuiltIn_GetTypeKind(El: TParamsExpr; AContext: TConvertContext): TJSElement; virtual;
+    Function ConvertBuiltIn_NameOf(El: TParamsExpr; AContext: TConvertContext): TJSElement; virtual;
+    Function ConvertBuiltIn_IsConstValue(El: TParamsExpr; AContext: TConvertContext): TJSElement; virtual;
     Function ConvertBuiltIn_Assert(El: TParamsExpr; AContext: TConvertContext): TJSElement; virtual;
     Function ConvertBuiltIn_New(El: TParamsExpr; AContext: TConvertContext): TJSElement; virtual;
     Function ConvertBuiltIn_Dispose(El: TParamsExpr; AContext: TConvertContext): TJSElement; virtual;
@@ -2348,6 +2358,12 @@ type
     Function ConvertIdentifierExpr(El: TPasExpr; const aName: string; AContext : TConvertContext): TJSElement; virtual;
     Function ConvertUnaryExpression(El: TUnaryExpr; AContext: TConvertContext): TJSElement; virtual;
     Function ConvertInlineSpecializeExpr(El: TInlineSpecializeExpr; AContext: TConvertContext): TJSElement; virtual;
+    Function ConvertIfExpr(El: TIfExpr; AContext: TConvertContext): TJSElement; virtual;
+    Function ConvertCaseExpr(El: TCaseExpr; AContext: TConvertContext): TJSElement; virtual;
+    Function ConvertTryExceptExpr(El: TTryExceptExpr; AContext: TConvertContext): TJSElement; virtual;
+    Function CreateCaseLabelsCondition(Labels: TFPList; const CaseValueName: string;
+      CaseValuePosEl, PosEl: TPasElement; IsCaseOfString: boolean;
+      AContext: TConvertContext): TJSElement; virtual;
     // Convert declarations
     Function ConvertElement(El : TPasElement; AContext: TConvertContext) : TJSElement; virtual;
     Function ConvertProperty(El: TPasProperty; AContext: TConvertContext ): TJSElement; virtual;
@@ -2751,7 +2767,7 @@ begin
   if Index>=0 then
     begin
     // insert LIFO - last in, first out
-    {$IFDEF VER3_2}
+    {$IF FPC_FULLVERSION<30204}
     OldItem:=TPasIdentifier(FElevatedLocals.List^[Index].Data);
     {$ELSE}
     OldItem:=TPasIdentifier(FElevatedLocals.List[Index].Data);
@@ -2761,7 +2777,7 @@ begin
       raise Exception.Create('20160925183438');
     {$ENDIF}
     Item.NextSameIdentifier:=OldItem;
-    {$IFDEF VER3_2}
+    {$IF FPC_FULLVERSION<30204}
     FElevatedLocals.List^[Index].Data:=Item;
     {$ELSE}
     FElevatedLocals.List[Index].Data:=Item;
@@ -3333,7 +3349,7 @@ begin
   if Index>=0 then
     begin
     // insert LIFO - last in, first out
-    {$IFDEF VER3_2}
+    {$IF FPC_FULLVERSION<30204}
     OldItem:=TPasIdentifier(FExternalNames.List^[Index].Data);
     {$ELSE}
     OldItem:=TPasIdentifier(FExternalNames.List[Index].Data);
@@ -3343,7 +3359,7 @@ begin
       raise Exception.Create('20170322235429');
     {$ENDIF}
     Item.NextSameIdentifier:=OldItem;
-    {$IFDEF VER3_2}
+    {$IF FPC_FULLVERSION<30204}
     FExternalNames.List^[Index].Data:=Item;
     {$ELSE}
     FExternalNames.List[Index].Data:=Item;
@@ -4596,7 +4612,7 @@ begin
       AddElevatedLocal(El);
       end;
     end
-  else if ParentC=TPasImplExceptOn then
+  else if (ParentC=TPasImplExceptOn) or (ParentC=TTryExceptExprOn) then
     // except on var
     RaiseVarModifierNotSupported(LocalVarModifiersAllowed)
   else if ParentC=TImplementationSection then
@@ -5873,7 +5889,7 @@ begin
   if (LeftResolved.BaseType=btCustom)
       or (RightResolved.BaseType=btCustom) then
     case Bin.OpCode of
-    eopIs:
+    eopIs,eopIsNot:
       if IsJSBaseType(LeftResolved,pbtJSValue,true) then
         begin
         // aJSValue is x
@@ -8003,6 +8019,25 @@ begin
   Result:=AddLocalVar(aName,nil,cvkNone,AutoUnique);
 end;
 
+function TFunctionContext.AddHoistedJSVar(const aName: string): string;
+var
+  V: TFCLocalIdentifier;
+begin
+  V:=AddLocalJSVar(aName,true);
+  V.Hoisted:=true;
+  Result:=V.Name;
+end;
+
+function TFunctionContext.HasHoistedVars: boolean;
+var
+  i: Integer;
+begin
+  for i:=0 to length(LocalVars)-1 do
+    if LocalVars[i].Hoisted then
+      exit(true);
+  Result:=false;
+end;
+
 procedure TFunctionContext.Add_InterfaceRelease(El: TPasElement);
 begin
   if IntfElReleases=nil then
@@ -8827,6 +8862,14 @@ begin
   aResolver:=AContext.Resolver;
   Result:=Nil;
   U:=nil;
+  if El.OpCode=eopTypeOf then
+    begin
+    // "type of a(b)" is a typecast -> convert the operand
+    // "type of a" is a type, it has no value
+    if (aResolver<>nil) and aResolver.IsTypeOfCastExpr(El) then
+      exit(ConvertExpression(El.Operand,AContext));
+    NotSupported(20260922100040);
+    end;
   Case El.OpCode of
     eopAdd:
       begin
@@ -8925,6 +8968,308 @@ function TPasToJSConverter.ConvertInlineSpecializeExpr(
   El: TInlineSpecializeExpr; AContext: TConvertContext): TJSElement;
 begin
   Result:=ConvertExpression(El.NameExpr,AContext);
+end;
+
+function TPasToJSConverter.ConvertIfExpr(El: TIfExpr; AContext: TConvertContext
+  ): TJSElement;
+// convert "if a then b else c" to "a ? b : c"
+var
+  CondExpr: TJSConditionalExpression;
+  A, B, C: TJSElement;
+begin
+  Result:=nil;
+  A:=nil;
+  B:=nil;
+  C:=nil;
+  try
+    A:=ConvertExpression(El.ConditionExpr,AContext);
+    B:=ConvertExpression(El.ThenExpr,AContext);
+    C:=ConvertExpression(El.ElseExpr,AContext);
+    CondExpr:=TJSConditionalExpression(CreateElement(TJSConditionalExpression,El));
+    CondExpr.A:=A;
+    CondExpr.B:=B;
+    CondExpr.C:=C;
+    Result:=CondExpr;
+  finally
+    if Result=nil then
+      begin
+      A.Free;
+      B.Free;
+      C.Free;
+      end;
+  end;
+end;
+
+function TPasToJSConverter.ConvertCaseExpr(El: TCaseExpr;
+  AContext: TConvertContext): TJSElement;
+// convert "case v of 1: a; 2..3: b; else c end"
+//   to "v === 1 ? a : (v >= 2) && (v <= 3) ? b : c"
+// if v is not a simple reference, it is stored in a hoisted local var:
+//   "($tmp = v, $tmp === 1 ? a : ...)"
+var
+  Root: TJSElement;
+  ParentCond: TJSConditionalExpression;
+
+  function GetSimpleRefPath(JS: TJSElement): string;
+  begin
+    if JS is TJSPrimaryExpressionIdent then
+      Result:=String(TJSPrimaryExpressionIdent(JS).Name)
+    else if JS is TJSPrimaryExpressionThis then
+      Result:='this'
+    else if JS is TJSDotMemberExpression then
+      begin
+      Result:=GetSimpleRefPath(TJSDotMemberExpression(JS).MExpr);
+      if Result<>'' then
+        Result:=Result+'.'+String(TJSDotMemberExpression(JS).Name);
+      end
+    else
+      Result:='';
+  end;
+
+  procedure AddToChain(NewEl: TJSElement);
+  begin
+    if ParentCond=nil then
+      Root:=NewEl
+    else
+      ParentCond.C:=NewEl;
+  end;
+
+var
+  aResolver: TPas2JSResolver;
+  CaseResolved: TPasResolverResult;
+  IsCaseOfString: Boolean;
+  CaseValueJS, ValueJS: TJSElement;
+  CaseValueName: String;
+  FuncCtx: TFunctionContext;
+  CondExpr: TJSConditionalExpression;
+  AssignSt: TJSSimpleAssignStatement;
+  CommaExpr: TJSCommaExpression;
+  i, LastIndex: Integer;
+  Branch: TCaseExprBranch;
+begin
+  Result:=nil;
+  aResolver:=AContext.Resolver;
+  IsCaseOfString:=false;
+  if aResolver<>nil then
+    begin
+    aResolver.ComputeElement(El.CaseExpr,CaseResolved,[]);
+    IsCaseOfString:=CaseResolved.BaseType in btAllStrings;
+    end;
+
+  Root:=nil;
+  ParentCond:=nil;
+  CaseValueJS:=ConvertExpression(El.CaseExpr,AContext);
+  try
+    CaseValueName:=GetSimpleRefPath(CaseValueJS);
+    if CaseValueName<>'' then
+      // simple reference, e.g. a variable -> use it directly
+      FreeAndNil(CaseValueJS)
+    else
+      begin
+      // e.g. a function call -> store in a local var
+      FuncCtx:=AContext.GetFunctionContext;
+      if FuncCtx=nil then
+        RaiseNotSupported(El,AContext,20260913140000);
+      CaseValueName:=FuncCtx.AddHoistedJSVar('$tmp');
+      end;
+
+    LastIndex:=El.Branches.Count-1;
+    for i:=0 to LastIndex do
+      begin
+      Branch:=TCaseExprBranch(El.Branches[i]);
+      ValueJS:=ConvertExpression(Branch.Value,AContext);
+      if (i=LastIndex) and (El.ElseExpr=nil) then
+        // without else all values are covered -> the last branch needs no test
+        AddToChain(ValueJS)
+      else
+        begin
+        CondExpr:=TJSConditionalExpression(CreateElement(TJSConditionalExpression,Branch));
+        AddToChain(CondExpr);
+        CondExpr.B:=ValueJS;
+        CondExpr.A:=CreateCaseLabelsCondition(Branch.Labels,CaseValueName,
+                                              El.CaseExpr,Branch,IsCaseOfString,AContext);
+        ParentCond:=CondExpr;
+        end;
+      end;
+    if El.ElseExpr<>nil then
+      AddToChain(ConvertExpression(El.ElseExpr,AContext));
+
+    if CaseValueJS<>nil then
+      begin
+      // create "($tmp = v, chain)"
+      AssignSt:=TJSSimpleAssignStatement(CreateElement(TJSSimpleAssignStatement,El.CaseExpr));
+      AssignSt.LHS:=CreatePrimitiveDotExpr(CaseValueName,El.CaseExpr);
+      AssignSt.Expr:=CaseValueJS;
+      CaseValueJS:=nil;
+      CommaExpr:=TJSCommaExpression(CreateElement(TJSCommaExpression,El));
+      CommaExpr.A:=AssignSt;
+      CommaExpr.B:=Root;
+      Root:=CommaExpr;
+      end;
+    Result:=Root;
+  finally
+    CaseValueJS.Free;
+    if Result=nil then
+      Root.Free;
+  end;
+end;
+
+function TPasToJSConverter.ConvertTryExceptExpr(El: TTryExceptExpr;
+  AContext: TConvertContext): TJSElement;
+// JS has no try-expression, so use an immediately called function:
+// convert "try a except b end" to
+//   "(function () { try { return a; } catch ($e) { return b; } }).call(this)"
+// convert "try a except on E: T do b; else c end" to
+//   "(function () {
+//      try { return a; }
+//      catch ($e) {
+//        if (T.isPrototypeOf($e)) { var E = $e; return b; } else return c;
+//      }
+//    }).call(this)"
+
+  function CreateReturn(Expr: TPasExpr): TJSReturnStatement;
+  var
+    JS: TJSElement;
+  begin
+    JS:=ConvertExpression(Expr,AContext);
+    Result:=TJSReturnStatement(CreateElement(TJSReturnStatement,Expr));
+    Result.Expr:=JS;
+  end;
+
+var
+  Call: TJSCallExpression;
+  DotExpr: TJSDotMemberExpression;
+  FuncSt: TJSFunctionDeclarationStatement;
+  TrySt: TJSTryCatchStatement;
+  IfSt, LastIfSt: TJSIfStatement;
+  List: TJSStatementList;
+  OnBranch: TTryExceptExprOn;
+  ElseSt: TJSReturnStatement;
+  i: Integer;
+begin
+  Result:=nil;
+  Call:=CreateCallExpression(El);
+  try
+    // create "function(){}.call(this)"
+    DotExpr:=TJSDotMemberExpression(CreateElement(TJSDotMemberExpression,El));
+    Call.Expr:=DotExpr;
+    DotExpr.Name:='call';
+    FuncSt:=CreateFunctionSt(El,true,true);
+    DotExpr.MExpr:=FuncSt;
+    Call.AddArg(TJSPrimaryExpressionThis(CreateElement(TJSPrimaryExpressionThis,El)));
+
+    // create "try { return a; } catch($e) {}"
+    TrySt:=TJSTryCatchStatement(CreateElement(TJSTryCatchStatement,El));
+    TJSSourceElements(FuncSt.AFunction.Body.A).Statements.AddNode.Node:=TrySt;
+    TrySt.Block:=CreateReturn(El.TryExpr);
+    TrySt.Ident:=TJSString(GetBIName(pbivnExceptObject));
+
+    // create "if (T.isPrototypeOf($e)) { var E = $e; return b; } else ..."
+    LastIfSt:=nil;
+    for i:=0 to El.OnBranches.Count-1 do
+      begin
+      OnBranch:=TTryExceptExprOn(El.OnBranches[i]);
+      IfSt:=TJSIfStatement(CreateElement(TJSIfStatement,OnBranch));
+      if LastIfSt=nil then
+        TrySt.BCatch:=IfSt
+      else
+        LastIfSt.BFalse:=IfSt;
+      LastIfSt:=IfSt;
+      IfSt.Cond:=CreateExceptOnCondition(OnBranch.TypeEl,OnBranch,AContext);
+      if OnBranch.VarEl<>nil then
+        begin
+        List:=TJSStatementList(CreateElement(TJSStatementList,OnBranch));
+        IfSt.BTrue:=List;
+        List.A:=CreateVarStatement(TransformElToJSName(OnBranch.VarEl,AContext),
+          CreatePrimitiveDotExpr(GetBIName(pbivnExceptObject),OnBranch),OnBranch);
+        List.B:=CreateReturn(OnBranch.Value);
+        end
+      else
+        IfSt.BTrue:=CreateReturn(OnBranch.Value);
+      end;
+
+    // create "return c"
+    ElseSt:=CreateReturn(El.ElseExpr);
+    if LastIfSt=nil then
+      TrySt.BCatch:=ElseSt
+    else
+      LastIfSt.BFalse:=ElseSt;
+
+    Result:=Call;
+  finally
+    if Result=nil then
+      Call.Free;
+  end;
+end;
+
+function TPasToJSConverter.CreateCaseLabelsCondition(Labels: TFPList;
+  const CaseValueName: string; CaseValuePosEl, PosEl: TPasElement;
+  IsCaseOfString: boolean; AContext: TConvertContext): TJSElement;
+// create for example "(tmp===expr) || ((tmp>=expr) && (tmp<=expr))"
+var
+  j: Integer;
+  Expr: TPasExpr;
+  JSExpr: TJSElement;
+  JSOrExpr: TJSLogicalOrExpression;
+  JSAndExpr: TJSLogicalAndExpression;
+  JSLEExpr: TJSRelationalExpressionLE;
+  JSGEExpr: TJSRelationalExpressionGE;
+  JSEQExpr: TJSEqualityExpressionSEQ;
+begin
+  Result:=nil;
+  for j:=0 to Labels.Count-1 do
+    begin
+    Expr:=TPasExpr(Labels[j]);
+    if (Expr is TBinaryExpr) and (TBinaryExpr(Expr).Kind=pekRange) then
+      begin
+      // range -> create "(tmp>=left) && (tmp<=right)"
+      // create "() && ()"
+      JSAndExpr:=TJSLogicalAndExpression(CreateElement(TJSLogicalAndExpression,Expr));
+      JSExpr:=JSAndExpr;
+      // create "tmp>=left"
+      JSGEExpr:=TJSRelationalExpressionGE(CreateElement(TJSRelationalExpressionGE,Expr));
+      JSAndExpr.A:=JSGEExpr;
+      JSGEExpr.A:=CreatePrimitiveDotExpr(CaseValueName,CaseValuePosEl);
+      JSGEExpr.B:=ConvertExpression(TBinaryExpr(Expr).left,AContext);
+      // create "tmp<=right"
+      JSLEExpr:=TJSRelationalExpressionLE(CreateElement(TJSRelationalExpressionLE,Expr));
+      JSAndExpr.B:=JSLEExpr;
+      JSLEExpr.A:=CreatePrimitiveDotExpr(CaseValueName,CaseValuePosEl);
+      JSLEExpr.B:=ConvertExpression(TBinaryExpr(Expr).right,AContext);
+      if IsCaseOfString then
+        begin
+        // case of string, range  ->  "(tmp.length===1) &&"
+        JSEQExpr:=TJSEqualityExpressionSEQ(CreateElement(TJSEqualityExpressionSEQ,Expr));
+        JSEQExpr.A:=CreateDotNameExpr(Expr,
+                      CreatePrimitiveDotExpr(CaseValueName,CaseValuePosEl),
+                      'length');
+        JSEQExpr.B:=CreateLiteralNumber(Expr,1);
+        JSAndExpr:=TJSLogicalAndExpression(CreateElement(TJSLogicalAndExpression,Expr));
+        JSAndExpr.A:=JSEQExpr;
+        JSAndExpr.B:=JSExpr;
+        JSExpr:=JSAndExpr;
+        end;
+      end
+    else
+      begin
+      // value -> create (tmp===Expr)
+      JSEQExpr:=TJSEqualityExpressionSEQ(CreateElement(TJSEqualityExpressionSEQ,Expr));
+      JSExpr:=JSEQExpr;
+      JSEQExpr.A:=CreatePrimitiveDotExpr(CaseValueName,CaseValuePosEl);
+      JSEQExpr.B:=ConvertExpression(Expr,AContext);
+      end;
+    if Result=nil then
+      // first expression
+      Result:=JSExpr
+    else
+      begin
+      // multi expression -> append with OR
+      JSOrExpr:=TJSLogicalOrExpression(CreateElement(TJSLogicalOrExpression,PosEl));
+      JSOrExpr.A:=Result;
+      JSOrExpr.B:=JSExpr;
+      Result:=JSOrExpr;
+      end;
+    end;
 end;
 
 function TPasToJSConverter.GetExpressionValueType(El: TPasExpr;
@@ -9068,7 +9413,7 @@ begin
     Result:=true
   else if El.Parent is TProcedureBody then
     Result:=true
-  else if El.Parent is TPasImplExceptOn then
+  else if (El.Parent is TPasImplExceptOn) or (El.Parent is TTryExceptExprOn) then
     Result:=true
   else
     Result:=false;
@@ -9099,13 +9444,16 @@ Const
    TJSRelationalExpressionLE,
    TJSRelationalExpressionGE,
    Nil, // In
+   Nil, // not in
    TJSRelationalExpressionInstanceOf, // is
+   TJSRelationalExpressionInstanceOf, // is not, negated below
    Nil, // As
    Nil, // Symmetrical diff
    Nil, // Address,
    Nil, // Deref
    Nil, // MemAddress
-   Nil  // SubIndent,
+   Nil, // SubIndent,
+   Nil  // TypeOf
   );
 
 Var
@@ -9208,7 +9556,13 @@ begin
       aResolver.ComputeElement(El.right,RightResolved,Flags);
 
       Result:=ConvertBinaryExpressionRes(El,AContext,LeftResolved,RightResolved,A,B);
-      if Result<>nil then exit;
+      if Result<>nil then
+        begin
+        if El.OpCode=eopIsNot then
+          // "a is not b" -> "!<is-expression>"
+          Result:=CreateUnaryNot(Result,El);
+        exit;
+        end;
       {$IFDEF VerbosePas2JS}
       writeln('TPasToJSConverter.ConvertBinaryExpression Left=',GetResolverResultDbg(LeftResolved),' Right=',GetResolverResultDbg(RightResolved));
       {$ENDIF}
@@ -9409,6 +9763,9 @@ begin
         // convert "a div b" to "rtl.trunc(a/b)"
         Result:=CreateTruncFloor(El,Result,true);
         end;
+      eopIsNot:
+        // convert "a is not b" to "!(a instanceof b)"
+        Result:=CreateUnaryNot(Result,El);
       end;
 
       if (bsOverflowChecks in AContext.ScannerBoolSwitches) and (aResolver<>nil) then
@@ -9525,9 +9882,10 @@ begin
     Result:=Call;
     exit;
     end
-  else if (El.OpCode=eopIn) and (RightResolved.BaseType in [btSet,btArrayOrSet])  then
+  else if (El.OpCode in [eopIn,eopNotIn]) and (RightResolved.BaseType in [btSet,btArrayOrSet])  then
     begin
     // a in b -> a in b
+    // a not in b -> !(a in b)
     if not (A is TJSLiteral) or (TJSLiteral(A).Value.ValueType<>jstNumber) then
       begin
       FreeAndNil(A);
@@ -9537,6 +9895,8 @@ begin
     InOp.A:=A; A:=nil;
     InOp.B:=B; B:=nil;
     Result:=InOp;
+    if El.OpCode=eopNotIn then
+      Result:=CreateUnaryNot(Result,El);
     exit;
     end
   else if (El.OpCode=eopAdd)
@@ -9737,9 +10097,9 @@ begin
       DoError(20180423114246,nIllegalQualifierInFrontOf,sIllegalQualifierInFrontOf,
         [OpcodeStrings[El.OpCode],aResolver.GetResolverResultDescription(RightResolved,true)],El);
     end
-  else if (El.OpCode=eopIs) then
+  else if (El.OpCode in [eopIs,eopIsNot]) then
     begin
-    // "A is B"
+    // "A is B" / "A is not B" (the negation is added by the caller)
     Call:=CreateCallExpression(El);
     Result:=Call;
     Call.AddArg(A); A:=nil;
@@ -10916,7 +11276,14 @@ begin
         BracketExpr:=TJSBracketMemberExpression(CreateElement(TJSBracketMemberExpression,El));
         TDotContext(AContext).JS:=BracketExpr;
         BracketExpr.MExpr:=AContext.JSElement;
-        Result:=CreateLiteralCustomValue(El,TJSString(copy(Name,2,length(Name)-2)));
+        Result:=CreateLiteralCustomValue(El,
+          {$IFDEF FPC_HAS_CPSTRING}
+          // the tree stores UTF-8, decode explicitly, not via system codepage
+          UTF8Decode(copy(Name,2,length(Name)-2))
+          {$ELSE}
+          TJSString(copy(Name,2,length(Name)-2))
+          {$ENDIF}
+          );
         BracketExpr.Name:=Result;
         exit;
         end;
@@ -12291,6 +12658,8 @@ begin
           bfDeleteArray: Result:=ConvertBuiltIn_DeleteArray(El,AContext);
           bfTypeInfo: Result:=ConvertBuiltIn_TypeInfo(El,AContext);
           bfGetTypeKind: Result:=ConvertBuiltIn_GetTypeKind(El,AContext);
+          bfNameOf: Result:=ConvertBuiltIn_NameOf(El,AContext);
+          bfIsConstValue: Result:=ConvertBuiltIn_IsConstValue(El,AContext);
           bfAssert:
             begin
             Result:=ConvertBuiltIn_Assert(El,AContext);
@@ -15111,6 +15480,54 @@ begin
   end;
 end;
 
+function TPasToJSConverter.ConvertBuiltIn_IsConstValue(El: TParamsExpr;
+  AContext: TConvertContext): TJSElement;
+// IsConstValue(Value) is a constant boolean, Value is not evaluated
+var
+  aResolver: TPas2JSResolver;
+  Value: TResEvalValue;
+begin
+  Result:=nil;
+  aResolver:=AContext.Resolver;
+  aResolver.BI_IsConstValue_OnEval(aResolver.BuiltInProcs[bfIsConstValue],El,[],Value);
+  try
+    if not (Value is TResEvalBool) then
+      RaiseNotSupported(El,AContext,20260911200101,'IsConstValue');
+    Result:=CreateLiteralBoolean(El,TResEvalBool(Value).B);
+  finally
+    ReleaseEvalValue(Value);
+  end;
+end;
+
+function TPasToJSConverter.ConvertBuiltIn_NameOf(El: TParamsExpr;
+  AContext: TConvertContext): TJSElement;
+// nameof(identifier) is a constant string
+var
+  aResolver: TPas2JSResolver;
+  Value: TResEvalValue;
+begin
+  Result:=nil;
+  aResolver:=AContext.Resolver;
+  aResolver.BI_NameOf_OnEval(aResolver.BuiltInProcs[bfNameOf],El,[refConst],Value);
+  try
+    if Value=nil then
+      RaiseNotSupported(El,AContext,20260908160001,'nameof');
+    case Value.Kind of
+    {$IFDEF FPC_HAS_CPSTRING}
+    revkString:
+      Result:=CreateLiteralJSString(El,TJSString(
+        aResolver.ExprEvaluator.GetUnicodeStr(TResEvalString(Value).S,El)));
+    {$ENDIF}
+    revkUnicodeString:
+      Result:=CreateLiteralJSString(El,TJSString(TResEvalUTF16(Value).S));
+    else
+      RaiseNotSupported(El,AContext,20260908160002,GetObjName(Value));
+    end;
+  finally
+    ReleaseEvalValue(Value);
+  end;
+end;
+
 function TPasToJSConverter.ConvertBuiltIn_Assert(El: TParamsExpr;
   AContext: TConvertContext): TJSElement;
 // throw pas.SysUtils.EAssertionFailed.$create("Create");
@@ -15302,7 +15719,6 @@ var
   Param: TPasExpr;
   TypeEl: TPasType;
   Value: TResEvalValue;
-  MinVal, MaxVal: TMaxPrecInt;
   C: TClass;
 begin
   Result:=nil;
@@ -15334,8 +15750,8 @@ begin
       begin
       if TypeEl.CustomData is TResElDataBaseType then
         begin
-        AContext.Resolver.GetIntegerRange(ResolvedEl.BaseType,MinVal,MaxVal);
-        Result:=CreateLiteralNumber(El,MinVal);
+        // the range of every integer base type contains 0
+        Result:=CreateLiteralNumber(El,0);
         exit;
         end;
       end
@@ -15599,6 +16015,12 @@ begin
     Result:=ConvertArrayValues(TArrayValues(El),AContext)
   else if C=TInlineSpecializeExpr then
     Result:=ConvertInlineSpecializeExpr(TInlineSpecializeExpr(El),AContext)
+  else if C=TIfExpr then
+    Result:=ConvertIfExpr(TIfExpr(El),AContext)
+  else if C=TCaseExpr then
+    Result:=ConvertCaseExpr(TCaseExpr(El),AContext)
+  else if C=TTryExceptExpr then
+    Result:=ConvertTryExceptExpr(TTryExceptExpr(El),AContext)
   else
     RaiseNotSupported(El,AContext,20161024191314);
 end;
@@ -15660,6 +16082,7 @@ begin
   else if (C=TPasRangeType) then
     Result:=ConvertRangeType(TPasRangeType(El),GlobalCtx)
   else if (C=TPasAliasType) then
+  else if (C=TPasTypeOfType) then
   else if (C=TPasTypeAliasType) then
     Result:=ConvertTypeAliasType(TPasTypeAliasType(El),GlobalCtx)
   else if (C=TPasPointerType) then
@@ -16137,6 +16560,16 @@ begin
       if ResStrVarElAdd then
         Add(ResStrVarEl,El);
       ResStrVarEl:=nil;
+      end;
+
+    // add "var $tmp;" for local vars used by expressions, e.g. case-expressions
+    if (AContext is TFunctionContext)
+        and TFunctionContext(AContext).HasHoistedVars then
+      begin
+      if AContext.IsGlobal and (AContext.JSElement is TJSSourceElements) then
+        AddHoistedVarsToSource(TFunctionContext(AContext),TJSSourceElements(AContext.JSElement),El)
+      else
+        ConvertDeclarations:=PrependHoistedVars(TFunctionContext(AContext),SLFirst,El);
       end;
   finally
     ResStrVarEl.Free;
@@ -18041,7 +18474,7 @@ begin
           FuncContext.BodySt:=Body.A;
 
           AddInterfaceReleases(FuncContext,PosEl);
-          Body.A:=FuncContext.BodySt;
+          Body.A:=PrependHoistedVars(FuncContext,FuncContext.BodySt,PosEl);
 
           // store precompiled JS
           if ImplJS<>nil then
@@ -18157,18 +18590,12 @@ var
   St: TPasImplCaseStatement;
   ok, IsCaseOfString: Boolean;
   i, j: Integer;
-  JSExpr: TJSElement;
   StList: TJSStatementList;
   Expr: TPasExpr;
   IfSt, LastIfSt: TJSIfStatement;
   TmpVar: TFCLocalIdentifier;
   VarDecl: TJSVarDeclaration;
   VarSt: TJSVariableStatement;
-  JSOrExpr: TJSLogicalOrExpression;
-  JSAndExpr: TJSLogicalAndExpression;
-  JSLEExpr: TJSRelationalExpressionLE;
-  JSGEExpr: TJSRelationalExpressionGE;
-  JSEQExpr: TJSEqualityExpressionSEQ;
   aResolver: TPas2JSResolver;
   CaseResolved: TPasResolverResult;
   FuncCtx: TFunctionContext;
@@ -18244,59 +18671,8 @@ begin
           LastIfSt.BFalse:=IfSt;
         LastIfSt:=IfSt;
 
-        for j:=0 to St.Expressions.Count-1 do
-          begin
-          Expr:=TPasExpr(St.Expressions[j]);
-          if (Expr is TBinaryExpr) and (TBinaryExpr(Expr).Kind=pekRange) then
-            begin
-            // range -> create "(tmp>=left) && (tmp<=right)"
-            // create "() && ()"
-            JSAndExpr:=TJSLogicalAndExpression(CreateElement(TJSLogicalAndExpression,Expr));
-            JSExpr:=JSAndExpr;
-            // create "tmp>=left"
-            JSGEExpr:=TJSRelationalExpressionGE(CreateElement(TJSRelationalExpressionGE,Expr));
-            JSAndExpr.A:=JSGEExpr;
-            JSGEExpr.A:=CreatePrimitiveDotExpr(TmpVar.Name,El.CaseExpr);
-            JSGEExpr.B:=ConvertExpression(TBinaryExpr(Expr).left,AContext);
-            // create "tmp<=right"
-            JSLEExpr:=TJSRelationalExpressionLE(CreateElement(TJSRelationalExpressionLE,Expr));
-            JSAndExpr.B:=JSLEExpr;
-            JSLEExpr.A:=CreatePrimitiveDotExpr(TmpVar.Name,El.CaseExpr);
-            JSLEExpr.B:=ConvertExpression(TBinaryExpr(Expr).right,AContext);
-            if IsCaseOfString then
-              begin
-              // case of string, range  ->  "(tmp.length===1) &&"
-              JSEQExpr:=TJSEqualityExpressionSEQ(CreateElement(TJSEqualityExpressionSEQ,Expr));
-              JSEQExpr.A:=CreateDotNameExpr(Expr,
-                            CreatePrimitiveDotExpr(TmpVar.Name,El.CaseExpr),
-                            'length');
-              JSEQExpr.B:=CreateLiteralNumber(Expr,1);
-              JSAndExpr:=TJSLogicalAndExpression(CreateElement(TJSLogicalAndExpression,Expr));
-              JSAndExpr.A:=JSEQExpr;
-              JSAndExpr.B:=JSExpr;
-              JSExpr:=JSAndExpr;
-              end;
-            end
-          else
-            begin
-            // value -> create (tmp===Expr)
-            JSEQExpr:=TJSEqualityExpressionSEQ(CreateElement(TJSEqualityExpressionSEQ,Expr));
-            JSExpr:=JSEQExpr;
-            JSEQExpr.A:=CreatePrimitiveDotExpr(TmpVar.Name,El.CaseExpr);
-            JSEQExpr.B:=ConvertExpression(Expr,AContext);
-            end;
-          if IfSt.Cond=nil then
-            // first expression
-            IfSt.Cond:=JSExpr
-          else
-            begin
-            // multi expression -> append with OR
-            JSOrExpr:=TJSLogicalOrExpression(CreateElement(TJSLogicalOrExpression,St));
-            JSOrExpr.A:=IfSt.Cond;
-            JSOrExpr.B:=JSExpr;
-            IfSt.Cond:=JSOrExpr;
-            end;
-          end;
+        IfSt.Cond:=CreateCaseLabelsCondition(St.Expressions,TmpVar.Name,
+                                             El.CaseExpr,St,IsCaseOfString,AContext);
         // convert statement
         if St.Body<>nil then
           IfSt.BTrue:=ConvertElement(St.Body,AContext)
@@ -18346,7 +18722,14 @@ begin
     if StartLine>0 then
       Col:=1;
     L:=TJSLiteral.Create(Line+StartLine,Col,El.SourceFilename);
+    {$IFDEF FPC_HAS_CPSTRING}
+    // Note: the source is always UTF-8 (see TPas2jsCachedFile.Load), so decode
+    // explicitly. A plain TJSString(s) would use the system codepage, mangling
+    // non ASCII characters on non UTF-8 systems.
+    L.Value.CustomValue:=UTF8Decode(s);
+    {$ELSE}
     L.Value.CustomValue:=TJSString(s);
+    {$ENDIF}
     Result:=L;
     if Pos(';',s)>0 then
       begin
@@ -22181,6 +22564,43 @@ begin
     end
   else
     RaiseInconsistency(20180402103144,PosEl);
+end;
+
+function TPasToJSConverter.PrependHoistedVars(FuncContext: TFunctionContext;
+  First: TJSElement; PosEl: TPasElement): TJSElement;
+// add in front of First: "var $tmp;"
+var
+  i: Integer;
+  St: TJSStatementList;
+  V: TFCLocalIdentifier;
+begin
+  Result:=First;
+  for i:=length(FuncContext.LocalVars)-1 downto 0 do
+    begin
+    V:=FuncContext.LocalVars[i];
+    if not V.Hoisted then continue;
+    St:=TJSStatementList(CreateElement(TJSStatementList,PosEl));
+    St.A:=CreateVarStatement(V.Name,nil,PosEl);
+    St.B:=Result;
+    Result:=St;
+    V.Hoisted:=false;
+    end;
+end;
+
+procedure TPasToJSConverter.AddHoistedVarsToSource(
+  FuncContext: TFunctionContext; Src: TJSSourceElements; PosEl: TPasElement);
+// insert at the start of Src: "var $tmp;"
+var
+  i: Integer;
+  V: TFCLocalIdentifier;
+begin
+  for i:=length(FuncContext.LocalVars)-1 downto 0 do
+    begin
+    V:=FuncContext.LocalVars[i];
+    if not V.Hoisted then continue;
+    Src.Statements.InsertNode(0).Node:=CreateVarStatement(V.Name,nil,PosEl);
+    V.Hoisted:=false;
+    end;
 end;
 
 procedure TPasToJSConverter.AddInterfaceReleases(FuncContext: TFunctionContext;
@@ -26245,7 +26665,8 @@ var
       exit(true);
     if El.Parent=nil then
       RaiseNotSupported(El,AContext,20170203121306,GetObjName(El));
-    if El.Parent.ClassType=TPasImplExceptOn then
+    if (El.Parent.ClassType=TPasImplExceptOn)
+        or (El.Parent.ClassType=TTryExceptExprOn) then
       exit(true);
     if not (El.Parent is TProcedureBody) then exit;
     Result:=true;
@@ -26362,6 +26783,8 @@ var
       else if (C=TPasAliasType)
           or (C=TPasTypeAliasType) then
         SrcType:=TPasAliasType(SrcType).DestType
+      else if C=TPasTypeOfType then
+        SrcType:=TPasTypeOfType(SrcType).DestType
       else if C=TPasSpecializeType then
         begin
         if SrcType.CustomData is TPasSpecializeTypeData then
@@ -27811,6 +28234,41 @@ begin
   Result:=CreatePrimitiveDotExpr(ArgName,PosEl);
 end;
 
+function TPasToJSConverter.CreateExceptOnCondition(TypeEl: TPasType;
+  PosEl: TPasElement; AContext: TConvertContext): TJSElement;
+// create "T.isPrototypeOf(exceptObject)"
+// or for external classes "rtl.isExt(exceptObject,TExternal)"
+var
+  DotExpr: TJSDotMemberExpression;
+  Call: TJSCallExpression;
+  aType: TPasType;
+begin
+  aType:=AContext.Resolver.ResolveAliasType(TypeEl);
+  Call:=CreateCallExpression(PosEl);
+  try
+    if (aType is TPasClassType) and TPasClassType(aType).IsExternal then
+      begin
+      // create rtl.isExt(exceptObject,T)
+      Call.Expr:=CreateMemberExpression([GetBIName(pbivnRTL),GetBIName(pbifnIsExt)]);
+      Call.AddArg(CreatePrimitiveDotExpr(GetBIName(pbivnExceptObject),PosEl));
+      Call.AddArg(CreateReferencePathExpr(TypeEl,AContext));
+      end
+    else
+      begin
+      // create "T.isPrototypeOf(exceptObject)"
+      DotExpr:=TJSDotMemberExpression(CreateElement(TJSDotMemberExpression,PosEl));
+      Call.Expr:=DotExpr;
+      DotExpr.MExpr:=CreateReferencePathExpr(TypeEl,AContext);
+      DotExpr.Name:='isPrototypeOf';
+      Call.AddArg(CreatePrimitiveDotExpr(GetBIName(pbivnExceptObject),PosEl));
+      end;
+    Result:=Call;
+  except
+    Call.Free;
+    raise;
+  end;
+end;
+
 function TPasToJSConverter.ConvertExceptOn(El: TPasImplExceptOn;
   AContext: TConvertContext): TJSElement;
 // convert "on T do ;" to "if(T.isPrototypeOf(exceptObject)){}"
@@ -27820,41 +28278,14 @@ function TPasToJSConverter.ConvertExceptOn(El: TPasImplExceptOn;
 Var
   IfSt : TJSIfStatement;
   ListFirst , ListLast: TJSStatementList;
-  DotExpr: TJSDotMemberExpression;
-  Call: TJSCallExpression;
   V: TJSVariableStatement;
-  aResolver: TPas2JSResolver;
-  aType: TPasType;
-  IsExternal: Boolean;
 begin
   Result:=nil;
-  aResolver:=AContext.Resolver;
-  aType:=aResolver.ResolveAliasType(El.TypeEl);
-  IsExternal:=(aType is TPasClassType) and TPasClassType(aType).IsExternal;
 
   // create "if()"
   IfSt:=TJSIfStatement(CreateElement(TJSIfStatement,El));
   try
-    if IsExternal then
-      begin
-      // create rtl.isExt(exceptObject,T)
-      Call:=CreateCallExpression(El);
-      Call.Expr:=CreateMemberExpression([GetBIName(pbivnRTL),GetBIName(pbifnIsExt)]);
-      Call.AddArg(CreatePrimitiveDotExpr(GetBIName(pbivnExceptObject),El));
-      Call.AddArg(CreateReferencePathExpr(El.TypeEl,AContext));
-      end
-    else
-      begin
-      // create "T.isPrototypeOf"
-      DotExpr:=TJSDotMemberExpression(CreateElement(TJSDotMemberExpression,El));
-      DotExpr.MExpr:=CreateReferencePathExpr(El.TypeEl,AContext);
-      DotExpr.Name:='isPrototypeOf';
-      // create "T.isPrototypeOf(exceptObject)"
-      Call:=CreateCallExpression(El);
-      Call.Expr:=DotExpr;
-      Call.AddArg(CreatePrimitiveDotExpr(GetBIName(pbivnExceptObject),El));
-      end;
-    IfSt.Cond:=Call;
+    IfSt.Cond:=CreateExceptOnCondition(El.TypeEl,El,AContext);
 
     if El.VarEl<>nil then
       begin

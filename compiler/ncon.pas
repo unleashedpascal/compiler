@@ -26,6 +26,7 @@ unit ncon;
 interface
 
     uses
+      cdynset,
       globtype,widestr,constexp,
       node,
       aasmbase,aasmcnst,cpuinfo,globals,
@@ -45,6 +46,7 @@ interface
           value_currency : currency;
           lab_real : tasmlabel;
           constructor create(v : bestreal;def:tdef);virtual;
+          constructor create_currency_scalar(def:tdef);
           constructor ppuload(t:tnodetype;ppufile:tcompilerppufile);override;
           procedure ppuwrite(ppufile:tcompilerppufile);override;
           procedure buildderefimpl;override;
@@ -52,6 +54,7 @@ interface
           function dogetcopy : tnode;override;
           function pass_1 : tnode;override;
           function pass_typecheck:tnode;override;
+          function simplify(forinline : boolean) : tnode;override;
           function docompare(p: tnode) : boolean; override;
           procedure printnodedata(var t:text);override;
           function emit_data(tcb:ttai_typedconstbuilder):sizeint; override;
@@ -71,6 +74,7 @@ interface
             against the ranges of the type definition.
           }
           constructor create(const v : tconstexprint;def:tdef; _rangecheck : boolean);virtual;
+          constructor create_currency_scalar(def:tdef);
           constructor ppuload(t:tnodetype;ppufile:tcompilerppufile);override;
           procedure ppuwrite(ppufile:tcompilerppufile);override;
           procedure buildderefimpl;override;
@@ -159,9 +163,9 @@ interface
        tsetconstnode = class(tunarynode)
           typedef : tdef;
           typedefderef : tderef;
-          value_set : pconstset;
+          value_set : tdynset;
           lab_set : tasmsymbol;
-          constructor create(s : pconstset;def:tdef);virtual;
+          constructor create(s : pdynset;def:tdef);virtual;
           destructor destroy;override;
           constructor ppuload(t:tnodetype;ppufile:tcompilerppufile);override;
           procedure ppuwrite(ppufile:tcompilerppufile);override;
@@ -176,6 +180,9 @@ interface
           function low : AInt;
           function high : AInt;
           function emit_data(tcb:ttai_typedconstbuilder):sizeint;
+          function getbyte(idx: integer): byte; inline;
+          { first four bytes of the set in host byte order }
+          function getcardinal: cardinal;
        end;
        tsetconstnodeclass = class of tsetconstnode;
 
@@ -237,7 +244,7 @@ implementation
       defcmp,defutil,procinfo,
       aasmdata,aasmtai,
       cgbase,
-      nld,nbas,ncnv;
+      nld,nbas,ncnv,nmat;
 
     function genintconstnode(const v : TConstExprInt) : tordconstnode;
       var
@@ -323,7 +330,7 @@ implementation
     function is_emptyset(p : tnode):boolean;
       begin
         is_emptyset:=(p.nodetype=setconstn) and
-                     (Tsetconstnode(p).value_set^=[]);
+                     DynSetIsEmpty(Tsetconstnode(p).value_set);
       end;
 
 
@@ -339,7 +346,7 @@ implementation
           stringconstn:
             result:=tstringconstnode(p).len=0;
           setconstn:
-            result:=tsetconstnode(p).value_set^=[];
+            result:=DynSetIsEmpty(tsetconstnode(p).value_set);
           else
             result:=false;
         end;
@@ -351,7 +358,6 @@ implementation
         p1  : tnode;
         len : longint;
         pc  : pchar;
-        value_set : pconstset;
       begin
         p1:=nil;
         case p.consttyp of
@@ -388,19 +394,10 @@ implementation
             end;
           constset :
             begin
-              if sp_generic_const in p.symoptions then
-                begin
-                  new(value_set);
-                  value_set^:=pconstset(p.value.valueptr)^;
-                  p1:=csetconstnode.create(value_set,p.constdef);
-                end
-              else if sp_generic_para in p.symoptions then
-                begin
-                  new(value_set);
-                  p1:=csetconstnode.create(value_set,p.constdef);
-                end
+              if (sp_generic_para in p.symoptions) and not (sp_generic_const in p.symoptions) then
+                p1:=csetconstnode.create(nil,p.constdef)
               else
-                p1:=csetconstnode.create(pconstset(p.value.valueptr),p.constdef);
+                p1:=csetconstnode.create(pdynset(@p.value.valueptr),p.constdef);
             end;
           constpointer :
             begin
@@ -423,6 +420,10 @@ implementation
           else
             internalerror(200205103);
         end;
+
+        if is_currency(p.constdef) then
+          Include(p1.flags, nf_is_currency);
+
         { transfer generic param flag from symbol to node }
         if sp_generic_para in p.symoptions then
           include(p1.flags,nf_generic_para);
@@ -449,6 +450,8 @@ implementation
       begin
          if current_settings.fputype=fpu_none then
             internalerror(2008022401);
+         if def.typ<>floatdef then
+           InternalError(2002022402);
          inherited create(realconstn);
          typedef:=def;
          case tfloatdef(def).floattype of
@@ -467,6 +470,13 @@ implementation
          value_real:=v;
          value_currency:=v;
          lab_real:=nil;
+      end;
+
+    constructor trealconstnode.create_currency_scalar(def:tdef);
+      begin
+        Create(10000.0,def);
+        Include(flags,nf_internal);
+        Include(flags,nf_is_currency);
       end;
 
     constructor trealconstnode.ppuload(t:tnodetype;ppufile:tcompilerppufile);
@@ -574,6 +584,21 @@ implementation
       end;
 
 
+    function trealconstnode.simplify(forinline : boolean) : tnode;
+      begin
+        result:=nil;
+        if (frac(value_real)<>0.0) and is_currency(resultdef) and not (nf_is_currency in flags) then
+          begin
+            { Unfortunately we can't safely store unscaled Currency values with
+              fractional components in a cross-platform way, so scale it here
+              so its 4 decimal places are preserved }
+            value_real:=value_real*BestReal(10000.0);
+            Include(flags,nf_is_currency);
+            Include(flags,nf_internal);
+          end;
+      end;
+
+
     function trealconstnode.docompare(p: tnode): boolean;
       begin
         docompare :=
@@ -589,7 +614,21 @@ implementation
            or
            (
             (tfloatdef(typedef).floattype<>s64currency) and
-            (value_real = trealconstnode(p).value_real) and
+            (value_real=trealconstnode(p).value_real) and
+            (
+              { Make sure 0.0 and -0.0 are not equated unless fastmath is enabled }
+              (cs_opt_fastmath in current_settings.optimizerswitches) or
+              not (
+                (
+                  IsPosZero(value_real) and
+                  IsNegZero(trealconstnode(p).value_real)
+                ) or
+                (
+                  IsNegZero(value_real) and
+                  IsPosZero(trealconstnode(p).value_real)
+                )
+              )
+            ) and
             { floating point compares for non-numbers give strange results usually }
             is_number_float(value_real) and
             is_number_float(trealconstnode(p).value_real)
@@ -650,6 +689,14 @@ implementation
          value:=v;
          typedef:=def;
          rangecheck := _rangecheck;
+      end;
+
+
+    constructor tordconstnode.create_currency_scalar(def:tdef);
+      begin
+        Create(10000,def,false);
+        Include(flags,nf_internal);
+        Include(flags,nf_is_currency);
       end;
 
 
@@ -1162,10 +1209,10 @@ implementation
                               exit;
                             end;
                           initwidestring(pw);
-                          setlengthwidestring(pw,len);
+                          setlengthwidestring(pw,len+1);
                           { returns room for terminating 0 }
                           if len>0 then
-                            l:=Utf8ToUnicode(pw.asconstpunicodechar,len,asconstpchar,len)
+                            l:=Utf8ToUnicode(pw.asconstpunicodechar,len+1,asconstpchar,len)
                           else
                             l:=1;
                           if (l<>getlengthwidestring(pw)) then
@@ -1351,16 +1398,12 @@ implementation
                              TSETCONSTNODE
 *****************************************************************************}
 
-    constructor tsetconstnode.create(s : pconstset;def:tdef);
-
+    constructor tsetconstnode.create(s : pdynset;def:tdef);
       begin
          inherited create(setconstn,nil);
          typedef:=def;
          if assigned(s) then
-           begin
-              new(value_set);
-              value_set^:=s^;
-           end
+           value_set:=DynSetCopy(s^)
          else
            value_set:=nil;
       end;
@@ -1368,8 +1411,7 @@ implementation
 
     destructor tsetconstnode.destroy;
       begin
-        if assigned(value_set) then
-         dispose(value_set);
+        value_set:=nil;
         inherited destroy;
       end;
 
@@ -1378,16 +1420,26 @@ implementation
       begin
         inherited ppuload(t,ppufile);
         ppufile.getderef(typedefderef);
-        new(value_set);
-        ppufile.getset(tppuset32(value_set^));
+        setlength(value_set,32);
+        ppufile.getset(value_set);
       end;
 
 
     procedure tsetconstnode.ppuwrite(ppufile:tcompilerppufile);
+      var
+        tmpset: array[0..31] of byte;
+        i: longint;
       begin
         inherited ppuwrite(ppufile);
         ppufile.putderef(typedefderef);
-        ppufile.putset(tppuset32(value_set^));
+        { the ppu format supports only sets up to 256 elements }
+        for i:=sizeof(tmpset) to length(value_set)-1 do
+          if value_set[i]<>0 then
+            internalerror(2026102301);
+        fillchar(tmpset,sizeof(tmpset),0);
+        if length(value_set)>0 then
+          move(value_set[0],tmpset[0],min(length(value_set),32));
+        ppufile.putset(tmpset);
       end;
 
 
@@ -1404,10 +1456,6 @@ implementation
         typedef:=tdef(typedefderef.resolve);
       end;
 
-    type
-       setbytes = array[0..31] of byte;
-       Psetbytes = ^setbytes;
-
     procedure tsetconstnode.adjustforsetbase;
       var
         i, diff: longint;
@@ -1420,6 +1468,7 @@ implementation
             if (tsetdef(resultdef).setbase and 7)<>0 then
               internalerror(2007091501);
             diff:=tsetdef(resultdef).setbase div 8;
+            DynSetExpand(value_set,(tsetdef(resultdef).size-1+diff)*8+7);
             { This is endian-neutral in the new set format: in both cases, }
             { the first byte contains the first elements of the set.       }
             { Since the compiler/base rtl cannot contain packed sets before }
@@ -1428,8 +1477,8 @@ implementation
             { <>0 with non-packed sets).                                    }
             for i:=0 to tsetdef(resultdef).size-1 do
               begin
-                Psetbytes(value_set)^[i]:=Psetbytes(value_set)^[i+diff];
-                Psetbytes(value_set)^[i+diff]:=0;
+                value_set[i]:=value_set[i+diff];
+                value_set[i+diff]:=0;
               end;
           end;
       end;
@@ -1440,13 +1489,7 @@ implementation
          n : tsetconstnode;
       begin
          n:=tsetconstnode(inherited dogetcopy);
-         if assigned(value_set) then
-           begin
-              new(n.value_set);
-              n.value_set^:=value_set^
-           end
-         else
-           n.value_set:=nil;
+         n.value_set:=DynSetCopy(value_set);
          n.typedef := typedef;
          n.lab_set:=lab_set;
          dogetcopy:=n;
@@ -1473,7 +1516,7 @@ implementation
     function tsetconstnode.docompare(p: tnode): boolean;
       begin
         docompare:=(inherited docompare(p)) and
-                   (value_set^=Tsetconstnode(p).value_set^);
+                   DynSetEqual(value_set,Tsetconstnode(p).value_set);
       end;
 
 
@@ -1482,10 +1525,10 @@ implementation
         i : longint;
       begin
         result:=0;
-        if not(assigned(value_set)) then
+        if length(value_set)=0 then
           exit;
-        for i:=0 to tsetdef(resultdef).size-1 do
-          result:=result+ PopCnt(Psetbytes(value_set)^[i]);
+        for i:=0 to min(tsetdef(resultdef).size,length(value_set))-1 do
+          result:=result+PopCnt(value_set[i]);
       end;
 
 
@@ -1494,12 +1537,12 @@ implementation
         i: ASizeInt;
       begin
         result:=0;
-        if not(assigned(value_set)) then
+        if length(value_set)=0 then
           exit;
         i:=0;
         while i<=tsetdef(resultdef).setmax do
           begin
-            if i in value_set^ then
+            if DynSetIn(value_set,i) then
               begin
                 result:=i;
                 exit;
@@ -1514,12 +1557,12 @@ implementation
         i: ASizeInt;
       begin
         result:=0;
-        if not(assigned(value_set)) then
+        if length(value_set)=0 then
           exit;
         i:=tsetdef(resultdef).setmax;
         while i>=tsetdef(resultdef).setbase do
           begin
-            if i in value_set^ then
+            if DynSetIn(value_set,i) then
               begin
                 result:=i;
                 exit;
@@ -1530,9 +1573,6 @@ implementation
 
 
     function tsetconstnode.emit_data(tcb:ttai_typedconstbuilder):sizeint;
-      type
-        setbytes=array[0..31] of byte;
-        Psetbytes=^setbytes;
       var
         setval : aint;
         i : sizeint;
@@ -1545,11 +1585,11 @@ implementation
                 { if changed to "paword", please also modify "32-resultdef.size*8" and      }
                 { cross-endian code below                                                   }
                 { Extra aint type cast to avoid range errors                                }
-                 setval:=aint(pCardinal(value_set)^)
+                 setval:=aint(getcardinal)
               end
             else
               begin
-                setval:=aint(reverse_longword(Pcardinal(value_set)^));
+                setval:=aint(reverse_longword(getcardinal));
               end;
             if (target_info.endian=endian_big) then
               setval:=setval shr (32-resultdef.size*8);
@@ -1570,12 +1610,29 @@ implementation
           begin
             if (source_info.endian=target_info.endian) then
               for i:=0 to resultdef.size-1 do
-                tcb.emit_tai(tai_const.create_8bit(Psetbytes(value_set)^[i]),u8inttype)
+                tcb.emit_tai(tai_const.create_8bit(getbyte(i)),u8inttype)
             else
               for i:=0 to resultdef.size-1 do
-                tcb.emit_tai(tai_const.create_8bit(reverse_byte(Psetbytes(value_set)^[i])),u8inttype);
+                tcb.emit_tai(tai_const.create_8bit(reverse_byte(getbyte(i))),u8inttype);
           end;
         result:=resultdef.size;
+      end;
+
+
+    function tsetconstnode.getbyte(idx: integer): byte;
+      begin
+        if (idx>=0) and (idx<length(value_set)) then
+          result:=value_set[idx]
+        else
+          result:=0;
+      end;
+
+
+    function tsetconstnode.getcardinal: cardinal;
+      begin
+        result:=0;
+        if length(value_set)>0 then
+          move(value_set[0],result,min(length(value_set),sizeof(result)));
       end;
 
 

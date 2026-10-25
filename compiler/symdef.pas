@@ -4929,7 +4929,7 @@ implementation
         { only used for external C++ classes and Java classes/records }
         if (import_lib^='') then
           stringdispose(import_lib);
-        ppufile.getset(tppuset4(objectoptions));
+        ppufile.getset(tppuset5(objectoptions));
         rtti.clause:=trtti_clause(ppufile.getbyte);
         for ro in trtti_option do
           ppufile.getset(tppuset1(rtti.options[ro]));
@@ -4982,7 +4982,7 @@ implementation
           ppufile.putstring(import_lib^)
         else
           ppufile.putstring('');
-        ppufile.putset(tppuset4(objectoptions));
+        ppufile.putset(tppuset5(objectoptions));
         ppufile.putbyte(byte(rtti.clause));
         for ro in trtti_option do
           ppufile.putset(tppuset1(rtti.options[ro]));

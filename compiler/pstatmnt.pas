@@ -423,6 +423,7 @@ implementation
       end;
 
 
+    { parses "case <expr> of" }
     function read_case_head(out casedef : tdef; out casedeferror, caseofstring : boolean) : tcasenode;
       var
         caseexpr : tnode;
@@ -5753,7 +5754,11 @@ implementation
                      (srsym.typ=labelsym)) then
                    begin
                       if current_scanner.token=_ID then
-                        consume_sym(srsym,srsymtable)
+                        begin
+                          srsym:=nil;
+                          srsymtable:=nil;
+                          consume_sym(srsym,srsymtable);
+                        end
                       else
                        begin
                          if current_scanner.token<>_INTCONST then

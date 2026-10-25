@@ -15,15 +15,15 @@
 {
   TPasNativeResolver descends from TPasResolver and adds the resolver semantics
   that apply to native Object Pascal compilation targets but not to the pas2js
-  (JavaScript) target. This wasy the base TPasResolver stays pas2js-clean and 
+  (JavaScript) target. This way the base TPasResolver stays pas2js-clean and
   a native consumer opts in by instantiating this class instead:
 
   * compile-time evaluation of the size/truncation intrinsics
-    SizeOf, BitSizeOf, Trunc, Round 
+    SizeOf, BitSizeOf, Trunc, Round
     (registered via AddBuiltInProc, so they are absent from the base setup);
   * the FPC compiler-intrinsic type names Boolean8/16/32/64, OleVariant and
     TypedFile, added as aliases of existing base types.
-  * More to come...   
+  * More to come...
 
   See the header of pasresolver.pp for the general resolver contract.
 
@@ -38,11 +38,11 @@ interface
 
 {$IFDEF FPC_DOTTEDUNITS}
 uses
-  System.Classes, System.SysUtils, Pascal.Tree, Pascal.ResolveEval, Pascal.Resolver;
+  System.Classes, System.SysUtils, Pascal.Tree, Pascal.ResolveEval, Pascal.Scanner, Pascal.Resolver;
 {$ELSE}
 uses
-  Classes, SysUtils, PasTree, PasResolveEval, PasResolver;
-{$ENDIF}  
+  Classes, SysUtils, PasTree, PasResolveEval, PScanner, PasResolver;
+{$ENDIF}
 
 type
 
@@ -51,6 +51,9 @@ type
   TPasNativeResolver = class(TPasResolver)
   private
     FTargetPointerSize: Integer;
+    // The enum values whose ordinal is being computed, so a value expression
+    // that names its own member cannot recurse forever.
+    FEnumOrdinalBusy: TFPList;
     // SizeOf/BitSizeOf/Trunc/Round all take exactly one argument;
     function BI_OneParam_OnGetCallCompatibility(Proc: TResElDataBuiltInProc;
       Expr: TPasExpr; RaiseOnError: boolean): integer;
@@ -62,7 +65,13 @@ type
       Params: TParamsExpr; out ResolvedEl: TPasResolverResult);
     procedure BI_TruncRound_OnEval(Proc: TResElDataBuiltInProc;
       Params: TParamsExpr; Flags: TResEvalFlags; out Evaluated: TResEvalValue);
-    // Registers SizeOf/BitSizeOf/Trunc/Round (idempotent) 
+    // native-target string Copy(s,start,count) -> string
+    function IsCharPointerType(AType: TPasType): Boolean;
+    function BI_CopyString_OnGetCallCompatibility(Proc: TResElDataBuiltInProc;
+      Expr: TPasExpr; RaiseOnError: boolean): integer;
+    procedure BI_CopyString_OnGetCallResult(Proc: TResElDataBuiltInProc;
+      Params: TParamsExpr; out ResolvedEl: TPasResolverResult);
+    // Registers SizeOf/BitSizeOf/Trunc/Round + string Copy (idempotent)
     procedure AddNativeConstEvalIntrinsics;
     // Registers the FPC compiler-intrinsic type names as base-type aliases
     procedure AddNativeIntrinsicTypes;
@@ -81,34 +90,62 @@ type
     // Degrades an address-of (@X) to an opaque pointer value (revkNil = unknown)
     function EvalNativeAddressOf(Expr: TPrimitiveExpr;
       Flags: TResEvalFlags): TResEvalValue; override;
-    // Native memory-layout packing directives, stored per element
-    procedure SetMinEnumSize(El: TPasElement; ASize: Integer); override;
-    function GetMinEnumSize(El: TPasElement): Integer; override;
-    procedure SetPackSet(El: TPasElement; ASize: Integer); override;
-    function GetPackSet(El: TPasElement): Integer; override;
-    procedure SetPackRecords(El: TPasElement; ASize: Integer); override;
-    function GetPackRecords(El: TPasElement): Integer; override;
-    (* 
-      Native pointer arithmetic: 
-      the untyped Pointer, a pointer declared under {$POINTERMATH ON} (pesfPointerMath), 
-      or a ^(Ansi)Char pointer permits +/- and indexing without the use-site switch. 
-    *)
-    function IsPointerMathType(El: TPasType): Boolean; override;
-    // Native target: Inc/Dec is allowed on any pointer, switch-independent.
-    function AllowIncDecOnPointer(El: TPasType): Boolean; override;
-    // Detects a bit-packed ordinal array element / record field access (an ordinal whose packed bit width is not a whole number of bytes).
-    function IsBitPackedOrdinalAccess(Expr: TPasExpr): boolean; override;
   public
     // Injects the native scope subclasses that carry the packing values.
     constructor Create; reintroduce;
-    // Byte size of an enum's storage (1/2/4 by value count, honouring {$MINENUMSIZE}).
+    destructor Destroy; override;
+    // Byte size of an enum's storage (1/2/4 by ordinal range, at least its {$PACKENUM} value).
     function GetEnumTypeSize(EnumType: TPasEnumType): Integer;
+    // Resolves the member values, then stores the enum's storage size in El.Size.
+    procedure FinishEnumType(El: TPasEnumType); override;
     // Bit width of a bit-packed ordinal access (0 if Expr is not one). 
     function BitPackedOrdinalBitSize(Expr: TPasExpr): integer;
     // Adds the base ObjFPC identifiers, then the native-only const-eval intrinsics and compiler-intrinsic type names.
     procedure AddObjFPCBuiltInIdentifiers(
       const TheBaseTypes: TResolveBaseTypes = btAllFPCTypes;
       const TheBaseProcs: TResolverBuiltInProcs = bfAllStandardProcs); override;
+    // Native record packing directive, stored per record
+    procedure SetPackRecords(El: TPasElement; ASize: Integer); override;
+    function GetPackRecords(El: TPasElement): Integer; override;
+    (*
+      Native pointer arithmetic:
+      the untyped Pointer, a pointer declared under {$POINTERMATH ON} (pesfPointerMath),
+      or a ^(Ansi)Char pointer permits +/- and indexing without the use-site switch.
+    *)
+    function IsPointerMathType(El: TPasType): Boolean; override;
+    // Native target: $POINTERMATH from the current scanner state, not a stale scope (tpointermath2).
+    function PointerMathBoolSwitchEnabled(El: TPasElement): Boolean; override;
+    // Native target: accept an implicit-spec candidate tentatively, defer to inference (timpfuncspez4/20).
+    function UseTentativeImplicitSpecMatch: Boolean; override;
+    // Native target: a generic record may self-reference in a method signature (tgeneric76).
+    function AllowRecordGenericSelfReference: Boolean; override;
+    // Native target: two distinct specialize nodes of the same generic with the
+    // same arguments denote the same type (tgeneric76 var-param exact match).
+    function SameSpecializeType(SpecA, SpecB: TPasSpecializeType;
+      ResolveAlias: TPRResolveAlias): Boolean; override;
+    // Native target: capture bool switches for a named non-generic proc type so a
+    // funcref's {$M+} RTTI is emitted correctly (tfuncref28/texrtti19).
+    function StoreProcTypeScopeBoolSwitches: Boolean; override;
+    // Native target: keep the narrower integer inference when the wider fully
+    // contains it (timpfuncspez13).
+    function PreferNarrowerInferredInteger: Boolean; override;
+    // Native target: Inc/Dec is allowed on any pointer, switch-independent.
+    function AllowIncDecOnPointer(El: TPasType): Boolean; override;
+    // Native target: Inc/Dec is allowed on any ordinal (char, boolean, enum).
+    function AllowIncDecOnOrdinal(bt: TResolverBaseType; El: TPasType): Boolean; override;
+    // Native target: Include/Exclude works on any ordinal set (set of char/int/bool).
+    function AllowInExcludeNonEnumSet: Boolean; override;
+    // Detects a bit-packed ordinal array element / record field access (an ordinal whose packed bit width is not a whole number of bytes).
+    function IsBitPackedOrdinalAccess(Expr: TPasExpr): boolean; override;
+    // Native ASSIGNED-value enum ordinal model (type e=(a,b:=8) -> Ord(b)=8),
+    // overriding the base INDEX model.
+    function EnumHasHoles(El: TPasEnumType): boolean; override;
+    function GetEnumValueOrdinal(EnumValue: TPasEnumValue): TMaxPrecInt; override;
+    function GetEnumValueForOrdinal(El: TPasEnumType; Ord: TMaxPrecInt): TPasEnumValue; override;
+    function GetEnumMinOrdinal(El: TPasEnumType): TMaxPrecInt; override;
+    function GetEnumMaxOrdinal(El: TPasEnumType): TMaxPrecInt; override;
+    // Native-ABI procedure-type checks: cdecl-variadic must be external; nostackframe needs assembler.
+    procedure FinishProcTypeNativeChecks(El: TPasProcedureType; Proc: TPasProcedure); override;
     // The target pointer size in bytes used by SizeOf folds; 0 (default) uses the host SizeOf(Pointer).
     property TargetPointerSize: Integer read FTargetPointerSize write FTargetPointerSize;
   end;
@@ -116,21 +153,11 @@ type
 implementation
 
 type
-  { Native scope subclasses that carry the packing value with the element, so
-    it persists across resolvers with no process-global. }
-  TNativeEnumTypeScope = class(TPasEnumTypeScope)
-  public
-    MinEnumSize: Integer;
-  end;
+  { Native record scope that carries the packing value with the record, so it
+    persists across resolvers with no process-global. }
   TNativeRecordScope = class(TPasRecordScope)
   public
     PackRecords: Integer;
-  end;
-  { A set type owns no scope, so its pack-set value rides on a resolve-data
-    attached to the otherwise-free CustomData slot. }
-  TNativePackSetData = class(TResolveData)
-  public
-    PackSet: Integer;
   end;
 
 procedure TPasNativeResolver.AddObjFPCBuiltInIdentifiers(
@@ -162,6 +189,92 @@ begin
     AddBuiltInProc('Round','function Round(const Float): Int64',
         @BI_OneParam_OnGetCallCompatibility,@BI_TruncRound_OnGetCallResult,
         @BI_TruncRound_OnEval,nil,bfRound);
+  // native-target string Copy: Copy(s,start,count) -> string. The base 'Copy'
+  // is bfCopyArray (array-only); this registers the overloaded string form.
+  if BuiltInProcs[bfCopyString]=nil then
+    AddBuiltInProc('Copy','function Copy(const S: String; Start: integer = 1; Count: integer = all): String',
+        @BI_CopyString_OnGetCallCompatibility,@BI_CopyString_OnGetCallResult,
+        nil,nil,bfCopyString);
+  // native-target Slice(arr,count) intrinsic — an open-array view of the first
+  // `count` elements. Used by the variants unit's array helpers.
+  if BuiltInProcs[bfSlice]=nil then
+    AddBuiltInProc('Slice','function Slice(var Array; Count: integer): Array',
+        @BI_Slice_OnGetCallCompatibility,@BI_Slice_OnGetCallResult,
+        nil,nil,bfSlice);
+end;
+
+function TPasNativeResolver.IsCharPointerType(AType: TPasType): Boolean;
+// True for PChar/PAnsiChar/PWideChar and any other pointer to a char type.
+var
+  DestResolved: TPasResolverResult;
+  PtrType: TPasType;
+begin
+  Result:=false;
+  if AType=nil then exit;
+  PtrType:=ResolveAliasType(AType);
+  if not (PtrType is TPasPointerType) then exit;
+  if TPasPointerType(PtrType).DestType=nil then exit;
+  ComputeElement(TPasPointerType(PtrType).DestType,DestResolved,[rcType]);
+  Result:=DestResolved.BaseType in btAllChars;
+end;
+
+
+function TPasNativeResolver.BI_CopyString_OnGetCallCompatibility(
+  Proc: TResElDataBuiltInProc; Expr: TPasExpr; RaiseOnError: boolean): integer;
+var
+  Params: TParamsExpr;
+  Param: TPasExpr;
+  ParamResolved: TPasResolverResult;
+begin
+  Result:=cIncompatible;
+  if not CheckBuiltInMinParamCount(Proc,Expr,1,RaiseOnError) then
+    exit;
+  Params:=TParamsExpr(Expr);
+  // first param: string, char, or a pointer to char - FPC converts a PChar to a
+  // string here, and fcl-db's dsparams.inc copies out of one:
+  // `Copy(ParamNameStart+1,1,p-ParamNameStart-2)`.
+  Param:=Params.Params[0];
+  ComputeElement(Param,ParamResolved,[]);
+  if not (rrfReadable in ParamResolved.Flags)
+      or not ((ParamResolved.BaseType in btAllStringAndChars)
+              or IsCharPointerType(ParamResolved.LoTypeEl)) then
+    exit(CheckRaiseTypeArgNo(20260318120000,1,Param,ParamResolved,'string',RaiseOnError));
+  if length(Params.Params)=1 then
+    exit(cExact);
+  // optional Start index
+  Param:=Params.Params[1];
+  ComputeElement(Param,ParamResolved,[]);
+  if not (rrfReadable in ParamResolved.Flags)
+      or not (ParamResolved.BaseType in btAllInteger) then
+    exit(CheckRaiseTypeArgNo(20260318120001,2,Param,ParamResolved,'integer',RaiseOnError));
+  if length(Params.Params)=2 then
+    exit(cExact);
+  // optional Count
+  Param:=Params.Params[2];
+  ComputeElement(Param,ParamResolved,[]);
+  if not (rrfReadable in ParamResolved.Flags)
+      or not (ParamResolved.BaseType in btAllInteger) then
+    exit(CheckRaiseTypeArgNo(20260318120002,3,Param,ParamResolved,'integer',RaiseOnError));
+  Result:=CheckBuiltInMaxParamCount(Proc,Params,3,RaiseOnError);
+end;
+
+procedure TPasNativeResolver.BI_CopyString_OnGetCallResult(
+  Proc: TResElDataBuiltInProc; Params: TParamsExpr; out ResolvedEl: TPasResolverResult);
+begin
+  if Proc=nil then ;
+  ComputeElement(Params.Params[0],ResolvedEl,[]);
+  // a Char is copied as a ShortString, a WideChar as a UnicodeString
+  case ResolvedEl.BaseType of
+    btChar,btAnsiChar:
+      SetResolverValueExpr(ResolvedEl,btShortString,BaseTypes[btShortString],
+        BaseTypes[btShortString],Params,[rrfReadable]);
+    btWideChar:
+      SetResolverValueExpr(ResolvedEl,btUnicodeString,BaseTypes[btUnicodeString],
+        BaseTypes[btUnicodeString],Params,[rrfReadable]);
+  end;
+  ResolvedEl.Flags:=ResolvedEl.Flags-[rrfWritable];
+  ResolvedEl.ExprEl:=Params;
+  ResolvedEl.IdentEl:=nil;
 end;
 
 
@@ -349,7 +462,8 @@ begin
   Result:=nil;
   if bt<>btPointer then exit;
   if (Params=nil) or (length(Params.Params)<1) then exit;
-  lVal:=Eval(Params.Params[0],[refConst]);
+  // Ask, do not demand - see EvalNativeNamedPointerCast below.
+  lVal:=Eval(Params.Params[0],[]);
   if lVal=nil then exit;
   try
     if lVal.Kind=revkInt then
@@ -368,16 +482,11 @@ var
 begin
   Result:=nil;
   if (Params=nil) or (length(Params.Params)<1) then exit;
-  // A non-constant operand raises EPasResolve ('constant expression expected');
-  // swallow it so an ordinary PChar(someVar) cast resolves as a runtime (non-
-  // const) expression rather than failing the unit. 
-  lVal:=nil;
-  try
-    lVal:=Eval(Params.Params[0],[refConst]);
-  except
-    on E: EPasResolve do
-      lVal:=nil;
-  end;
+  // A cast of a non-constant is simply not foldable, so ASK without demanding:
+  // refConst LOGS "constant expression expected" and then raises a bare
+  // Exception, which no `on EPasResolve` can swallow and which the log has
+  // already turned into a failed unit (vcl-compat casts TypeInfo(T)).
+  lVal:=Eval(Params.Params[0],[]);
   if (lVal<>nil) and (lVal.Kind=revkInt) then
     Result:=TResEvalInt.CreateValue(TResEvalInt(lVal).Int);
   ReleaseEvalValue(lVal);
@@ -389,8 +498,14 @@ function TPasNativeResolver.EvalNativeAddressOf(Expr: TPrimitiveExpr;
 
 begin
   Result:=nil;
-  if (Expr<>nil) and (Expr.Parent is TUnaryExpr)
+  if Expr=nil then exit;
+  if (Expr.Parent is TUnaryExpr)
       and (TUnaryExpr(Expr.Parent).OpCode=eopAddress) then
+    Result:=TResEvalValue.CreateKind(revkNil)
+  // A bare procedure name in a Delphi-mode constant initializer is a procedure
+  // address too, e.g. `array[0..1] of TExprFunc = (FuncA, FuncB)`.
+  else if (Expr.CustomData is TResolvedReference)
+      and (TResolvedReference(Expr.CustomData).Declaration is TPasProcedure) then
     Result:=TResEvalValue.CreateKind(revkNil);
   if Flags=[] then ;
 end;
@@ -400,26 +515,16 @@ constructor TPasNativeResolver.Create;
 
 begin
   inherited Create;
-  ScopeClass_EnumType:=TNativeEnumTypeScope;
   ScopeClass_Record:=TNativeRecordScope;
+  FEnumOrdinalBusy:=TFPList.Create;
 end;
 
 
-procedure TPasNativeResolver.SetMinEnumSize(El: TPasElement; ASize: Integer);
+destructor TPasNativeResolver.Destroy;
 
 begin
-  if (El<>nil) and (ASize>0) and (El.CustomData is TNativeEnumTypeScope) then
-    TNativeEnumTypeScope(El.CustomData).MinEnumSize:=ASize;
-end;
-
-
-function TPasNativeResolver.GetMinEnumSize(El: TPasElement): Integer;
-
-begin
-  if (El<>nil) and (El.CustomData is TNativeEnumTypeScope) then
-    Result:=TNativeEnumTypeScope(El.CustomData).MinEnumSize
-  else
-    Result:=0;
+  FreeAndNil(FEnumOrdinalBusy);
+  inherited Destroy;
 end;
 
 
@@ -441,52 +546,42 @@ begin
 end;
 
 
-procedure TPasNativeResolver.SetPackSet(El: TPasElement; ASize: Integer);
-
-var
-  Data: TNativePackSetData;
-
-begin
-  if (El=nil) or (ASize<=0) then exit;
-  if El.CustomData is TNativePackSetData then
-    TNativePackSetData(El.CustomData).PackSet:=ASize
-  else if El.CustomData=nil then
-    begin
-    Data:=TNativePackSetData.Create;
-    Data.PackSet:=ASize;
-    AddResolveData(El,Data,lkModule);
-    end;
-end;
-
-
-function TPasNativeResolver.GetPackSet(El: TPasElement): Integer;
-
-begin
-  if (El<>nil) and (El.CustomData is TNativePackSetData) then
-    Result:=TNativePackSetData(El.CustomData).PackSet
-  else
-    Result:=0;
-end;
-
-
 function TPasNativeResolver.GetEnumTypeSize(EnumType: TPasEnumType): Integer;
-
+// Sized by the ORDINAL RANGE, not by the member count: an assigned value puts a
+// member far outside the count (cgbase.pas spans a TRegister enum over the whole
+// LongInt range with two members). Counting members answered 1 byte there while
+// the emitted storage was already 4, so SizeOf disagreed with the layout.
 var
-  Count, MinSize: Integer;
+  MinSize: Integer;
+  MinOrd, MaxOrd: TMaxPrecInt;
 
 begin
-  Count:=0;
-  if (EnumType<>nil) and (EnumType.Values<>nil) then
-    Count:=EnumType.Values.Count;
-  if Count<=256 then
-    Result:=1
-  else if Count<=65536 then
-    Result:=2
-  else
-    Result:=4;
+  if (EnumType<>nil) and (EnumType.Size>0) then
+    exit(EnumType.Size);
+  Result:=1;
+  if (EnumType<>nil) and (EnumType.Values<>nil) and (EnumType.Values.Count>0) then
+    begin
+    MinOrd:=GetEnumMinOrdinal(EnumType);
+    MaxOrd:=GetEnumMaxOrdinal(EnumType);
+    if (MinOrd>=-128) and (MaxOrd<=255) then
+      Result:=1
+    else if (MinOrd>=-32768) and (MaxOrd<=65535) then
+      Result:=2
+    else
+      Result:=4;
+    end;
   MinSize:=GetMinEnumSize(EnumType);
   if MinSize>Result then
     Result:=MinSize;
+end;
+
+
+procedure TPasNativeResolver.FinishEnumType(El: TPasEnumType);
+
+begin
+  inherited FinishEnumType(El);
+  El.Size:=0;
+  El.Size:=GetEnumTypeSize(El);
 end;
 
 
@@ -518,12 +613,122 @@ begin
 end;
 
 
+function TPasNativeResolver.AllowRecordGenericSelfReference: Boolean;
+
+begin
+  // native/FPC target: a generic record may reference its own type in a method
+  // signature (a record method returning TSelf<T>, tgeneric76).
+  Result:=True;
+end;
+
+
+function TPasNativeResolver.StoreProcTypeScopeBoolSwitches: Boolean;
+
+begin
+  // native/FPC target: needs the proc-type scope's bool switches for funcref
+  // {$M+} RTTI (tfuncref28/texrtti19).
+  Result:=True;
+end;
+
+
+function TPasNativeResolver.PreferNarrowerInferredInteger: Boolean;
+
+begin
+  // native/FPC target: keep the narrower integer inference when the wider fully
+  // contains it (timpfuncspez13).
+  Result:=True;
+end;
+
+
+function TPasNativeResolver.SameSpecializeType(SpecA, SpecB: TPasSpecializeType;
+  ResolveAlias: TPRResolveAlias): Boolean;
+
+var
+  i: Integer;
+  lDeclA, lDeclB: TPasElement;
+
+begin
+  // Two inline specializations are the same type when they specialize the same
+  // generic with the same arguments (e.g. TPointEx<T> written twice in a generic
+  // body — distinct TPasSpecializeType nodes that aren't merged at definition
+  // time). Compare structurally so the concrete <integer>/<single> specializations
+  // never leak into the comparison (tgeneric76 var-param exact match).
+  Result:=False;
+  if not IsSameType(SpecA.DestType,SpecB.DestType,ResolveAlias) then exit;
+  if SpecA.Params.Count<>SpecB.Params.Count then exit;
+  for i:=0 to SpecA.Params.Count-1 do
+    if (TObject(SpecA.Params[i]) is TPasType) and (TObject(SpecB.Params[i]) is TPasType) then
+      begin
+      if not IsSameType(TPasType(SpecA.Params[i]),TPasType(SpecB.Params[i]),ResolveAlias) then
+        exit;
+      end
+    else if (TObject(SpecA.Params[i]) is TPasExpr) and (TObject(SpecB.Params[i]) is TPasExpr) then
+      begin
+      // type-argument expressions (e.g. the template name T): compare what each
+      // resolves to (same template/type => same specialization argument).
+      lDeclA:=nil;
+      lDeclB:=nil;
+      if TPasExpr(SpecA.Params[i]).CustomData is TResolvedReference then
+        lDeclA:=TResolvedReference(TPasExpr(SpecA.Params[i]).CustomData).Declaration;
+      if TPasExpr(SpecB.Params[i]).CustomData is TResolvedReference then
+        lDeclB:=TResolvedReference(TPasExpr(SpecB.Params[i]).CustomData).Declaration;
+      if lDeclA=nil then exit;
+      if (lDeclA is TPasType) and (lDeclB is TPasType) then
+        begin
+        if not IsSameType(TPasType(lDeclA),TPasType(lDeclB),ResolveAlias) then exit;
+        end
+      else if lDeclA<>lDeclB then
+        exit;
+      end
+    else if TObject(SpecA.Params[i])<>TObject(SpecB.Params[i]) then
+      exit;
+  Result:=True;
+end;
+
+
+function TPasNativeResolver.UseTentativeImplicitSpecMatch: Boolean;
+
+begin
+  // native/FPC target: accept an implicit-spec candidate tentatively (arg count
+  // only) and defer the type check to inference (timpfuncspez4/20).
+  Result:=True;
+end;
+
+
+function TPasNativeResolver.PointerMathBoolSwitchEnabled(El: TPasElement): Boolean;
+
+begin
+  // native/FPC target: use the current scanner bool switches (resolution is
+  // interleaved with parsing, so this reflects the use-site mode), not a stale
+  // scope value captured before a {$MODE DELPHI} (tpointermath2).
+  Result:=bsPointerMath in CurrentParser.Scanner.CurrentBoolSwitches;
+  if El=nil then ;
+end;
+
+
 function TPasNativeResolver.AllowIncDecOnPointer(El: TPasType): Boolean;
 
 begin
   // native target: Inc/Dec is allowed on any pointer, switch-independent
   Result:=True;
   if El=nil then ;
+end;
+
+
+function TPasNativeResolver.AllowIncDecOnOrdinal(bt: TResolverBaseType; El: TPasType): Boolean;
+
+begin
+  // native target: Inc/Dec is allowed on any ordinal (char/boolean/enum)
+  Result:=True;
+  if (bt=btNone) and (El=nil) then ;
+end;
+
+
+function TPasNativeResolver.AllowInExcludeNonEnumSet: Boolean;
+
+begin
+  // native target: Include/Exclude works on any ordinal set
+  Result:=True;
 end;
 
 
@@ -688,6 +893,140 @@ begin
         and (TPasRecordType(IdentEl.Parent).PackMode=pmBitPacked) then
       Result:=OrdBitSize(TPasVariable(IdentEl).VarType);
     end;
+end;
+
+function TPasNativeResolver.EnumHasHoles(El: TPasEnumType): boolean;
+// FPC's rule (tenumsymtable.insertsym): a first value above 0 is a jump, and so
+// is a later value above the highest value so far plus one.
+var
+  i: Integer;
+  Value, MaxValue: TMaxPrecInt;
+begin
+  Result:=false;
+  if El=nil then exit;
+  MaxValue:=0;
+  for i:=0 to El.Values.Count-1 do
+    begin
+    Value:=GetEnumValueOrdinal(TPasEnumValue(El.Values[i]));
+    if i=0 then
+      begin
+      if Value>0 then
+        exit(true);
+      MaxValue:=Value;
+      end
+    else
+      begin
+      if Value>MaxValue+1 then
+        exit(true);
+      if Value>MaxValue then
+        MaxValue:=Value;
+      end;
+    end;
+end;
+
+function TPasNativeResolver.GetEnumValueOrdinal(EnumValue: TPasEnumValue): TMaxPrecInt;
+// Native: ordinal = explicitly assigned value, else previous+1 (FPC ISO ordinals).
+var
+  El: TPasEnumType;
+  i: Integer;
+  EV: TPasEnumValue;
+  V: TResEvalValue;
+  Cur: TMaxPrecInt;
+begin
+  Result:=0;
+  if EnumValue=nil then exit;
+  if not (EnumValue.Parent is TPasEnumType) then exit;
+  // A member valued from an EARLIER member of the same enum evaluates that
+  // member, which re-enters here; refuse a value that names itself rather than
+  // recursing forever.
+  if FEnumOrdinalBusy.IndexOf(EnumValue)>=0 then exit;
+  El:=TPasEnumType(EnumValue.Parent);
+  FEnumOrdinalBusy.Add(EnumValue);
+  try
+    Cur:=0;
+    for i:=0 to El.Values.Count-1 do
+      begin
+      EV:=TPasEnumValue(El.Values[i]);
+      if EV.Value<>nil then
+        begin
+        V:=Eval(EV.Value,[refConst]);
+        try
+          // The value may name another enum member (`aLast = aTwo`), which
+          // evaluates to that member's own ORDINAL.
+          if V is TResEvalInt then
+            Cur:=TResEvalInt(V).Int
+          else if V is TResEvalUInt then
+            Cur:=TMaxPrecInt(TResEvalUInt(V).UInt)
+          else if V is TResEvalEnum then
+            Cur:=TResEvalEnum(V).Index;
+        finally
+          ReleaseEvalValue(V);
+        end;
+        end;
+      if EV=EnumValue then
+        exit(Cur);
+      inc(Cur);
+      end;
+  finally
+    FEnumOrdinalBusy.Remove(EnumValue);
+  end;
+end;
+
+function TPasNativeResolver.GetEnumValueForOrdinal(El: TPasEnumType; Ord: TMaxPrecInt): TPasEnumValue;
+// Native inverse: find the enum value whose assigned ordinal equals Ord.
+var
+  i: Integer;
+  EV: TPasEnumValue;
+begin
+  Result:=nil;
+  if (El=nil) or (El.Values=nil) then exit;
+  for i:=0 to El.Values.Count-1 do
+    begin
+    EV:=TPasEnumValue(El.Values[i]);
+    if GetEnumValueOrdinal(EV)=Ord then
+      exit(EV);
+    end;
+end;
+
+function TPasNativeResolver.GetEnumMinOrdinal(El: TPasEnumType): TMaxPrecInt;
+begin
+  Result:=0;
+  if (El=nil) or (El.Values=nil) or (El.Values.Count=0) then exit;
+  Result:=GetEnumValueOrdinal(TPasEnumValue(El.Values[0]));
+end;
+
+function TPasNativeResolver.GetEnumMaxOrdinal(El: TPasEnumType): TMaxPrecInt;
+begin
+  Result:=0;
+  if (El=nil) or (El.Values=nil) or (El.Values.Count=0) then exit;
+  // assigned enum values are strictly ascending -> last value is the max.
+  Result:=GetEnumValueOrdinal(TPasEnumValue(El.Values[El.Values.Count-1]));
+end;
+
+procedure TPasNativeResolver.FinishProcTypeNativeChecks(El: TPasProcedureType; Proc: TPasProcedure);
+var
+  Args: TFPList;
+  i: Integer;
+begin
+  if (El=nil) or (Proc=nil) then exit;
+  // A C-style (cdecl/...) routine with an "array of const" parameter is variadic;
+  // it cannot be implemented in Pascal -> must be external (taoc1/2/3).
+  if (El.CallingConvention in [ccCDecl,ccMWPascal,ccSysV_ABI_CDecl,ccMS_ABI_CDecl])
+      and not Proc.IsExternal then
+    begin
+    Args:=El.Args;
+    for i:=0 to Args.Count-1 do
+      if IsArrayOfConst(TPasArgument(Args[i]).ArgType) then
+        begin
+        RaiseMsg(20260622140000,nVarArgsNeedCDeclAndExternal,
+          sVarArgsNeedCDeclAndExternal,[],Proc);
+        break;
+        end;
+    end;
+  // nostackframe is only valid together with assembler (tnostackframe1/2/3).
+  if (pmNoStackFrame in Proc.Modifiers) and not Proc.IsAssembler then
+    RaiseMsg(20260622150000,nNoStackFrameWithoutAssembler,
+      sNoStackFrameWithoutAssembler,[],Proc);
 end;
 
 end.

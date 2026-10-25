@@ -1,5 +1,5 @@
 {$IFNDEF FPC_DOTTEDUNITS}
-unit fpsimpleserver;
+unit FpSimpleServer;
 {$ENDIF}
 {
     This file is part of the Free Pascal run time library.
@@ -23,7 +23,7 @@ interface
 
 uses
 {$IFDEF FPC_DOTTEDUNITS}
-  System.SysUtils, System.Classes, System.Types, System.StrUtils, System.IniFiles, FpJson.Parser,
+  System.SysUtils, System.Classes, System.Types, System.StrUtils, System.IniFiles,
   {$ifdef unix}
   UnixApi.Base,
   {$endif}
@@ -50,7 +50,7 @@ uses
   {$ELSE}
     custmicrohttpapp,
   {$ENDIF}
-  types, jsonparser, strutils, inifiles, httproute, httpdefs, fphttpserver, fpmimetypes, fpwebfile, fpwebproxy,
+  types, strutils, inifiles, httproute, httpdefs, fphttpserver, fpmimetypes, fpwebfile, fpwebproxy,
   webutil;
 {$ENDIF}
 Const
@@ -762,10 +762,10 @@ procedure TFPSimpleServerApplication.GetValidOptions(out aShort: String; out aLo
 
 Const
   LongOpts : TStringDynArray =
-     ('help','quiet','noindexpage','directory:','port:','indexpage:','ssl','hostname:','mimetypes:','proxy:','config:','background','echo','quit:','max-age:','api:','coi','capture','version','interface','upload-dir','upload','upload-response','thread-mode:');
+     ('help','quiet','noindexpage','directory:','port:','indexpage:','ssl','hostname:','mimetypes:','proxy:','config:','background','echo','quit:','max-age:','api:','coi','capture::','version','interface:','upload-dir:','upload:','upload-response:','thread-mode:');
 
 begin
-  aShort:='hqd:ni:p:sH:m:x:c:beQ:a:A:ou::VIl:L:r:t:';
+  aShort:='hqd:ni:p:sH:m:x:c:beQ:a:A:ou::VI:l:L:r:t:';
   aLong:=LongOpts;
 end;
 

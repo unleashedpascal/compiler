@@ -18,9 +18,15 @@ unit tcCSSParser;
 
 interface
 
+{$IFDEF FPC_DOTTEDUNITS}
+uses
+  System.Classes, System.SysUtils, FpcUnit.Test, FpcUnit.Registry,
+  FpCss.Parser, FpCss.Tree, FpCss.Scanner;
+{$ELSE FPC_DOTTEDUNITS}
 uses
   Classes, SysUtils, fpcunit, testregistry, fpcssparser, fpcsstree,
   fpCSSScanner;
+{$ENDIF FPC_DOTTEDUNITS}
 
 type
 
@@ -111,6 +117,7 @@ type
     Procedure TestMediaCommaBoolean;
     Procedure TestMediaCommaNotBoolean;
     Procedure TestMediaPlain;
+    Procedure TestMediaPlainNoSpace;
     Procedure TestMediaNotPlain;
     Procedure TestMediaNotIdentifier;
     Procedure TestMediaOnlyIdentifier;
@@ -125,7 +132,27 @@ type
     Procedure TestMediaPlainCommaPlain;
     Procedure TestMediaRatio;
     Procedure TestMediaNestedBracket;
+    Procedure TestMediaSkipDeclaration;
+    Procedure TestMediaInRule;
     Procedure TestSupportsFunction;
+    Procedure TestSupportsInRule;
+    Procedure TestSupportsSkipDeclaration;
+    Procedure TestUnknownAtRuleSkipDeclaration;
+    Procedure TestStartingStyleAtKeyWord;
+    Procedure TestStartingStyleInRule;
+    Procedure TestRuleInStartingStyle;
+    Procedure TestStartingStyleSkipDeclaration;
+    Procedure TestStartingStyleInMediaSkipDeclaration;
+    Procedure TestKeyframesEmpty;
+    Procedure TestKeyframesFromTo;
+    Procedure TestKeyframesPercentage;
+    Procedure TestKeyframesPercentageList;
+    Procedure TestKeyframesFloatPercentage;
+    Procedure TestKeyframesMultipleDeclarations;
+    Procedure TestKeyframesVendorPrefixed;
+    Procedure TestKeyframesNameString;
+    Procedure TestKeyframesInMedia;
+    Procedure TestKeyframesAsString;
     Procedure TestSkipUnknownFunction;
     Procedure TestNestedRule;
     Procedure TestNestedAndSpaceRule;
@@ -134,6 +161,17 @@ type
     Procedure TestNestedAndPlusRule;
     Procedure TestNestedRule_AppendedAndOperator;
     Procedure TestNestedRule_NestedDeclarations;
+    Procedure TestNestedTypeRule;
+    Procedure TestNestedTypeSpaceTypeRule;
+    Procedure TestNestedTypeMultiLineRule;
+    Procedure TestNestedTypeCommaTypeRule;
+    Procedure TestNestedTypeAttributeRule;
+    Procedure TestNestedTypeStringRule;
+    Procedure TestNestedTypePseudoRule;
+    Procedure TestNestedTypePseudoElementRule;
+    Procedure TestNestedStarRule;
+    Procedure TestNestedRule_DeclarationNoSpace;
+    Procedure TestNestedRule_CustomProperty;
     Procedure TestDeclarationSourcePosition;
     Procedure TestDeclarationValueSourcePosition;
     Procedure TestDeclarationValueSourceStreamPos;
@@ -181,7 +219,11 @@ type
 
 implementation
 
+{$IFDEF FPC_DOTTEDUNITS}
+uses System.IniFiles, System.TypInfo;
+{$ELSE FPC_DOTTEDUNITS}
 uses inifiles, typinfo;
+{$ENDIF FPC_DOTTEDUNITS}
 
 { TTestCSSFilesParser }
 
@@ -241,7 +283,6 @@ end;
 
 procedure TTestCSSFilesParser.Testanimation;
 begin
-  SkipInvalid:=true;
   RunFileTest;
 end;
 
@@ -904,6 +945,23 @@ begin
   AssertEquals('selector right value','hover',aSel.Value);
 end;
 
+procedure TTestCSSParser.TestMediaPlainNoSpace;
+// the whitespace around the ':' of a media feature is optional
+var
+  R: TCSSAtRuleElement;
+  aBin: TCSSBinaryElement;
+  aSel: TCSSIdentifierElement;
+begin
+  R:=TCSSAtRuleElement(ParseRule('@media (max-width:100px) {  }'));
+  AssertEquals('at keyword','@media',R.AtKeyWord);
+  AssertEquals('selector count',1,R.SelectorCount);
+  aBin:=TCSSBinaryElement(CheckClass('selector 0',TCSSBinaryElement,R.Selectors[0]));
+  AssertEquals('selector operation',boColon,aBin.Operation);
+  aSel:=TCSSIdentifierElement(CheckClass('selector left',TCSSIdentifierElement,aBin.Left));
+  AssertEquals('selector left value','max-width',aSel.Value);
+  CheckLiteral('selector right',aBin.Right,100,cu_px);
+end;
+
 procedure TTestCSSParser.TestMediaNotPlain;
 begin
   ParseRule('@media not (any-hover: hover) {  }');
@@ -1052,6 +1110,81 @@ begin
   ParseRule('@media ((print)) {  }');
 end;
 
+procedure TTestCSSParser.TestMediaSkipDeclaration;
+// a @media contains only rules, the color:red is skipped
+var
+  M: TCSSAtRuleElement;
+  aMediaSel: TCSSIdentifierElement;
+  aNestedRule: TCSSRuleElement;
+  aSel: TCSSClassNameElement;
+  D: TCSSDeclarationElement;
+begin
+  SkipInvalid:=true;
+  M:=TCSSAtRuleElement(CheckClass('at',TCSSAtRuleElement,
+       ParseRule('@media print { color:red; .foo { width:1px; } }')));
+  AssertEquals('at keyword','@media',M.AtKeyWord);
+  AssertEquals('selector count',1,M.SelectorCount);
+  aMediaSel:=TCSSIdentifierElement(CheckClass('media selector',TCSSIdentifierElement,M.Selectors[0]));
+  AssertEquals('media selector name','print',aMediaSel.Value);
+  AssertEquals('declaration count',0,M.ChildCount);
+  AssertEquals('nested rule count',1,M.NestedRuleCount);
+
+  aNestedRule:=M.NestedRules[0];
+  AssertEquals('nested selector count',1,aNestedRule.SelectorCount);
+  aSel:=TCSSClassNameElement(CheckClass('nested selector',TCSSClassNameElement,aNestedRule.Selectors[0]));
+  AssertEquals('nested sel name','foo',aSel.Value);
+  AssertEquals('nested nested rule count',0,aNestedRule.NestedRuleCount);
+  AssertEquals('nested declaration count',1,aNestedRule.ChildCount);
+  D:=CheckDeclaration(aNestedRule,0,'width');
+  AssertEquals('nested value count',1,D.ChildCount);
+  CheckLiteral('nested value',D.Children[0],1,cu_px);
+end;
+
+procedure TTestCSSParser.TestMediaInRule;
+// a @media nested in a style rule has the same conditions as a top level @media
+// and its block can contain declarations and nested rules
+var
+  aRule, aNestedRule: TCSSRuleElement;
+  M: TCSSAtRuleElement;
+  aSel: TCSSClassNameElement;
+  aBin: TCSSBinaryElement;
+  aCond: TCSSIdentifierElement;
+  D: TCSSDeclarationElement;
+  Id: TCSSIdentifierElement;
+begin
+  aRule:=ParseRule('.bar { color:blue; @media (width > 100px) { color:red; .foo { top:1px; } } }');
+  AssertEquals('selector count',1,aRule.SelectorCount);
+  aSel:=TCSSClassNameElement(CheckClass('Selector',TCSSClassNameElement,aRule.Selectors[0]));
+  AssertEquals('Sel name','bar',aSel.Value);
+  AssertEquals('declaration count',1,aRule.ChildCount);
+  D:=CheckDeclaration(aRule,0,'color');
+  Id:=TCSSIdentifierElement(CheckClass('Value',TCSSIdentifierElement,D.Children[0]));
+  AssertEquals('Value','blue',Id.Value);
+  AssertEquals('nested rule count',1,aRule.NestedRuleCount);
+
+  M:=TCSSAtRuleElement(CheckClass('nested at',TCSSAtRuleElement,aRule.NestedRules[0]));
+  AssertEquals('nested at keyword','@media',M.AtKeyWord);
+  // same media condition tree as the top level @media, see TestMediaRangeNameValue
+  AssertEquals('nested selector count',1,M.SelectorCount);
+  aBin:=TCSSBinaryElement(CheckClass('media selector',TCSSBinaryElement,M.Selectors[0]));
+  AssertEquals('media selector operation',boGT,aBin.Operation);
+  aCond:=TCSSIdentifierElement(CheckClass('media selector left',TCSSIdentifierElement,aBin.Left));
+  AssertEquals('media selector left value','width',aCond.Value);
+  CheckLiteral('media selector right',aBin.Right,100,cu_px);
+
+  AssertEquals('nested declaration count',1,M.ChildCount);
+  D:=CheckDeclaration(M,0,'color');
+  Id:=TCSSIdentifierElement(CheckClass('nested value',TCSSIdentifierElement,D.Children[0]));
+  AssertEquals('nested value','red',Id.Value);
+  AssertEquals('nested nested rule count',1,M.NestedRuleCount);
+
+  aNestedRule:=M.NestedRules[0];
+  aSel:=TCSSClassNameElement(CheckClass('nested nested selector',TCSSClassNameElement,aNestedRule.Selectors[0]));
+  AssertEquals('nested nested sel name','foo',aSel.Value);
+  D:=CheckDeclaration(aNestedRule,0,'top');
+  CheckLiteral('nested nested value',D.Children[0],1,cu_px);
+end;
+
 procedure TTestCSSParser.TestSupportsFunction;
 begin
   ParseRule('@supports ((position: -webkit-sticky) or (position: sticky)) {'+ sLineBreak+
@@ -1063,6 +1196,400 @@ begin
   '  } '+ sLineBreak+
   '} '
   );
+end;
+
+procedure TTestCSSParser.TestStartingStyleAtKeyWord;
+var
+  R: TCSSAtRuleElement;
+begin
+  R:=TCSSAtRuleElement(CheckClass('at',TCSSAtRuleElement,ParseRule('@starting-style { }')));
+  AssertEquals('at keyword','@starting-style',R.AtKeyWord);
+  AssertEquals('selector count',0,R.SelectorCount);
+  AssertEquals('declaration count',0,R.ChildCount);
+  AssertEquals('nested rule count',0,R.NestedRuleCount);
+end;
+
+procedure TTestCSSParser.TestStartingStyleInRule;
+var
+  aRule: TCSSRuleElement;
+  R: TCSSAtRuleElement;
+  aSel: TCSSClassNameElement;
+  D: TCSSDeclarationElement;
+  Id: TCSSIdentifierElement;
+begin
+  aRule:=ParseRule('.foo { background-color: green; @starting-style { background-color: transparent; } }');
+  AssertEquals('selector count',1,aRule.SelectorCount);
+  aSel:=TCSSClassNameElement(CheckClass('Selector',TCSSClassNameElement,aRule.Selectors[0]));
+  AssertEquals('Sel name','foo',aSel.Value);
+  AssertEquals('declaration count',1,aRule.ChildCount);
+  D:=CheckDeclaration(aRule,0,'background-color');
+  AssertEquals('Value count',1,D.ChildCount);
+  Id:=TCSSIdentifierElement(CheckClass('Value',TCSSIdentifierElement,D.Children[0]));
+  AssertEquals('Value','green',Id.Value);
+
+  AssertEquals('nested rule count',1,aRule.NestedRuleCount);
+  R:=TCSSAtRuleElement(CheckClass('nested at',TCSSAtRuleElement,aRule.NestedRules[0]));
+  AssertEquals('nested at keyword','@starting-style',R.AtKeyWord);
+  AssertEquals('nested selector count',0,R.SelectorCount);
+  AssertEquals('nested nested rule count',0,R.NestedRuleCount);
+  AssertEquals('nested declaration count',1,R.ChildCount);
+  D:=CheckDeclaration(R,0,'background-color');
+  AssertEquals('nested value count',1,D.ChildCount);
+  Id:=TCSSIdentifierElement(CheckClass('nested value',TCSSIdentifierElement,D.Children[0]));
+  AssertEquals('nested value','transparent',Id.Value);
+end;
+
+procedure TTestCSSParser.TestRuleInStartingStyle;
+var
+  R: TCSSAtRuleElement;
+  aNestedRule: TCSSRuleElement;
+  aSel: TCSSClassNameElement;
+  D: TCSSDeclarationElement;
+begin
+  R:=TCSSAtRuleElement(CheckClass('at',TCSSAtRuleElement,ParseRule('@starting-style { .foo { opacity: 0; } }')));
+  AssertEquals('at keyword','@starting-style',R.AtKeyWord);
+  AssertEquals('selector count',0,R.SelectorCount);
+  AssertEquals('declaration count',0,R.ChildCount);
+  AssertEquals('nested rule count',1,R.NestedRuleCount);
+
+  aNestedRule:=R.NestedRules[0];
+  AssertEquals('nested selector count',1,aNestedRule.SelectorCount);
+  aSel:=TCSSClassNameElement(CheckClass('nested selector',TCSSClassNameElement,aNestedRule.Selectors[0]));
+  AssertEquals('nested sel name','foo',aSel.Value);
+  AssertEquals('nested nested rule count',0,aNestedRule.NestedRuleCount);
+  AssertEquals('nested declaration count',1,aNestedRule.ChildCount);
+  D:=CheckDeclaration(aNestedRule,0,'opacity');
+  AssertEquals('nested value count',1,D.ChildCount);
+  CheckLiteral('nested value',D.Children[0],0);
+end;
+
+procedure TTestCSSParser.TestStartingStyleSkipDeclaration;
+// a top level @starting-style contains only rules, the color:red is skipped
+var
+  R: TCSSAtRuleElement;
+  aNestedRule: TCSSRuleElement;
+  aSel: TCSSClassNameElement;
+  D: TCSSDeclarationElement;
+begin
+  SkipInvalid:=true;
+  R:=TCSSAtRuleElement(CheckClass('at',TCSSAtRuleElement,
+       ParseRule('@starting-style { color: red; .foo { width: 1px; } }')));
+  AssertEquals('at keyword','@starting-style',R.AtKeyWord);
+  AssertEquals('selector count',0,R.SelectorCount);
+  AssertEquals('declaration count',0,R.ChildCount);
+  AssertEquals('nested rule count',1,R.NestedRuleCount);
+
+  aNestedRule:=R.NestedRules[0];
+  AssertEquals('nested selector count',1,aNestedRule.SelectorCount);
+  aSel:=TCSSClassNameElement(CheckClass('nested selector',TCSSClassNameElement,aNestedRule.Selectors[0]));
+  AssertEquals('nested sel name','foo',aSel.Value);
+  AssertEquals('nested nested rule count',0,aNestedRule.NestedRuleCount);
+  AssertEquals('nested declaration count',1,aNestedRule.ChildCount);
+  D:=CheckDeclaration(aNestedRule,0,'width');
+  AssertEquals('nested value count',1,D.ChildCount);
+  CheckLiteral('nested value',D.Children[0],1,cu_px);
+end;
+
+procedure TTestCSSParser.TestStartingStyleInMediaSkipDeclaration;
+// a @starting-style in a @media contains only rules, the color:red is skipped
+var
+  M, R: TCSSAtRuleElement;
+  aMediaSel: TCSSIdentifierElement;
+  aNestedRule: TCSSRuleElement;
+  aSel: TCSSClassNameElement;
+  D: TCSSDeclarationElement;
+begin
+  SkipInvalid:=true;
+  M:=TCSSAtRuleElement(CheckClass('at',TCSSAtRuleElement,
+       ParseRule('@media print { @starting-style { color: red; .foo { width: 1px; } } }')));
+  AssertEquals('at keyword','@media',M.AtKeyWord);
+  AssertEquals('selector count',1,M.SelectorCount);
+  aMediaSel:=TCSSIdentifierElement(CheckClass('media selector',TCSSIdentifierElement,M.Selectors[0]));
+  AssertEquals('media selector name','print',aMediaSel.Value);
+  AssertEquals('declaration count',0,M.ChildCount);
+  AssertEquals('nested rule count',1,M.NestedRuleCount);
+
+  R:=TCSSAtRuleElement(CheckClass('nested at',TCSSAtRuleElement,M.NestedRules[0]));
+  AssertEquals('nested at keyword','@starting-style',R.AtKeyWord);
+  AssertEquals('nested selector count',0,R.SelectorCount);
+  AssertEquals('nested declaration count',0,R.ChildCount);
+  AssertEquals('nested nested rule count',1,R.NestedRuleCount);
+
+  aNestedRule:=R.NestedRules[0];
+  AssertEquals('nested nested selector count',1,aNestedRule.SelectorCount);
+  aSel:=TCSSClassNameElement(CheckClass('nested nested selector',TCSSClassNameElement,aNestedRule.Selectors[0]));
+  AssertEquals('nested nested sel name','foo',aSel.Value);
+  AssertEquals('nested nested declaration count',1,aNestedRule.ChildCount);
+  D:=CheckDeclaration(aNestedRule,0,'width');
+  AssertEquals('nested nested value count',1,D.ChildCount);
+  CheckLiteral('nested nested value',D.Children[0],1,cu_px);
+end;
+
+procedure TTestCSSParser.TestSupportsInRule;
+// a @supports nested in a style rule can contain declarations and nested rules
+var
+  aRule, aNestedRule: TCSSRuleElement;
+  R: TCSSAtRuleElement;
+  aSel: TCSSClassNameElement;
+  D: TCSSDeclarationElement;
+  Id: TCSSIdentifierElement;
+begin
+  aRule:=ParseRule('.bar { color:blue; @supports (display:grid) { color:red; .foo { top:1px; } } }');
+  AssertEquals('selector count',1,aRule.SelectorCount);
+  aSel:=TCSSClassNameElement(CheckClass('Selector',TCSSClassNameElement,aRule.Selectors[0]));
+  AssertEquals('Sel name','bar',aSel.Value);
+  AssertEquals('declaration count',1,aRule.ChildCount);
+  D:=CheckDeclaration(aRule,0,'color');
+  Id:=TCSSIdentifierElement(CheckClass('Value',TCSSIdentifierElement,D.Children[0]));
+  AssertEquals('Value','blue',Id.Value);
+  AssertEquals('nested rule count',1,aRule.NestedRuleCount);
+
+  R:=TCSSAtRuleElement(CheckClass('nested at',TCSSAtRuleElement,aRule.NestedRules[0]));
+  AssertEquals('nested at keyword','@supports',R.AtKeyWord);
+  AssertEquals('nested selector count',1,R.SelectorCount);
+  AssertEquals('nested declaration count',1,R.ChildCount);
+  D:=CheckDeclaration(R,0,'color');
+  Id:=TCSSIdentifierElement(CheckClass('nested value',TCSSIdentifierElement,D.Children[0]));
+  AssertEquals('nested value','red',Id.Value);
+  AssertEquals('nested nested rule count',1,R.NestedRuleCount);
+
+  aNestedRule:=R.NestedRules[0];
+  aSel:=TCSSClassNameElement(CheckClass('nested nested selector',TCSSClassNameElement,aNestedRule.Selectors[0]));
+  AssertEquals('nested nested sel name','foo',aSel.Value);
+  D:=CheckDeclaration(aNestedRule,0,'top');
+  CheckLiteral('nested nested value',D.Children[0],1,cu_px);
+end;
+
+procedure TTestCSSParser.TestSupportsSkipDeclaration;
+// a @supports contains only rules, the color:red is skipped
+var
+  R: TCSSAtRuleElement;
+  aBody: TCSSCompoundElement;
+  aNestedRule: TCSSRuleElement;
+  aSel: TCSSClassNameElement;
+  D: TCSSDeclarationElement;
+begin
+  SkipInvalid:=true;
+  R:=TCSSAtRuleElement(CheckClass('at',TCSSAtRuleElement,
+       ParseRule('@supports (display:grid) { color:red; .foo { width:1px; } }')));
+  AssertEquals('at keyword','@supports',R.AtKeyWord);
+  AssertEquals('selector count',1,R.SelectorCount);
+  AssertEquals('nested rule count',0,R.NestedRuleCount);
+  AssertEquals('child count',1,R.ChildCount);
+  aBody:=TCSSCompoundElement(CheckClass('body',TCSSCompoundElement,R.Children[0]));
+  AssertEquals('body child count',1,aBody.ChildCount);
+
+  aNestedRule:=TCSSRuleElement(CheckClass('body rule',TCSSRuleElement,aBody.Children[0]));
+  AssertEquals('rule selector count',1,aNestedRule.SelectorCount);
+  aSel:=TCSSClassNameElement(CheckClass('rule selector',TCSSClassNameElement,aNestedRule.Selectors[0]));
+  AssertEquals('rule sel name','foo',aSel.Value);
+  AssertEquals('rule declaration count',1,aNestedRule.ChildCount);
+  D:=CheckDeclaration(aNestedRule,0,'width');
+  AssertEquals('rule value count',1,D.ChildCount);
+  CheckLiteral('rule value',D.Children[0],1,cu_px);
+end;
+
+procedure TTestCSSParser.TestUnknownAtRuleSkipDeclaration;
+// an unknown at-rule contains only rules, the color:red is skipped
+var
+  R: TCSSAtRuleElement;
+  aBody: TCSSCompoundElement;
+  aNestedRule: TCSSRuleElement;
+  aSel: TCSSClassNameElement;
+begin
+  SkipInvalid:=true;
+  R:=TCSSAtRuleElement(CheckClass('at',TCSSAtRuleElement,
+       ParseRule('@unknown { color:red; .foo { width:1px; } }')));
+  AssertEquals('at keyword','@unknown',R.AtKeyWord);
+  AssertEquals('selector count',0,R.SelectorCount);
+  AssertEquals('nested rule count',0,R.NestedRuleCount);
+  AssertEquals('child count',1,R.ChildCount);
+  aBody:=TCSSCompoundElement(CheckClass('body',TCSSCompoundElement,R.Children[0]));
+  AssertEquals('body child count',1,aBody.ChildCount);
+
+  aNestedRule:=TCSSRuleElement(CheckClass('body rule',TCSSRuleElement,aBody.Children[0]));
+  aSel:=TCSSClassNameElement(CheckClass('rule selector',TCSSClassNameElement,aNestedRule.Selectors[0]));
+  AssertEquals('rule sel name','foo',aSel.Value);
+  CheckDeclaration(aNestedRule,0,'width');
+end;
+
+procedure TTestCSSParser.TestKeyframesEmpty;
+var
+  R: TCSSAtRuleElement;
+begin
+  R:=TCSSAtRuleElement(CheckClass('at',TCSSAtRuleElement,ParseRule('@keyframes fade { }')));
+  AssertEquals('at keyword','@keyframes',R.AtKeyWord);
+  AssertEquals('selector count',1,R.SelectorCount);
+  CheckSelector(R,0,'fade');
+  AssertEquals('declaration count',0,R.ChildCount);
+  AssertEquals('keyframe count',0,R.NestedRuleCount);
+end;
+
+procedure TTestCSSParser.TestKeyframesFromTo;
+var
+  R: TCSSAtRuleElement;
+  aKeyframe: TCSSRuleElement;
+  D: TCSSDeclarationElement;
+begin
+  R:=TCSSAtRuleElement(CheckClass('at',TCSSAtRuleElement,
+       ParseRule('@keyframes fade { from { top: 1px; } to { top: 2px; } }')));
+  AssertEquals('at keyword','@keyframes',R.AtKeyWord);
+  AssertEquals('selector count',1,R.SelectorCount);
+  CheckSelector(R,0,'fade');
+  AssertEquals('declaration count',0,R.ChildCount);
+  AssertEquals('keyframe count',2,R.NestedRuleCount);
+
+  aKeyframe:=R.NestedRules[0];
+  AssertEquals('keyframe 0 selector count',1,aKeyframe.SelectorCount);
+  CheckClass('keyframe 0 selector',TCSSIdentifierElement,aKeyframe.Selectors[0]);
+  CheckSelector(aKeyframe,0,'from');
+  AssertEquals('keyframe 0 declaration count',1,aKeyframe.ChildCount);
+  D:=CheckDeclaration(aKeyframe,0,'top');
+  CheckLiteral('keyframe 0 value',D.Children[0],1,cu_px);
+
+  aKeyframe:=R.NestedRules[1];
+  AssertEquals('keyframe 1 selector count',1,aKeyframe.SelectorCount);
+  CheckSelector(aKeyframe,0,'to');
+  D:=CheckDeclaration(aKeyframe,0,'top');
+  CheckLiteral('keyframe 1 value',D.Children[0],2,cu_px);
+end;
+
+procedure TTestCSSParser.TestKeyframesPercentage;
+var
+  R: TCSSAtRuleElement;
+  aKeyframe: TCSSRuleElement;
+  D: TCSSDeclarationElement;
+begin
+  R:=TCSSAtRuleElement(CheckClass('at',TCSSAtRuleElement,
+       ParseRule('@keyframes fade { 0% { top: 1px; } 100% { top: 2px; } }')));
+  AssertEquals('at keyword','@keyframes',R.AtKeyWord);
+  AssertEquals('keyframe count',2,R.NestedRuleCount);
+
+  aKeyframe:=R.NestedRules[0];
+  AssertEquals('keyframe 0 selector count',1,aKeyframe.SelectorCount);
+  CheckLiteral('keyframe 0 selector',aKeyframe.Selectors[0],0,cuPercent);
+  D:=CheckDeclaration(aKeyframe,0,'top');
+  CheckLiteral('keyframe 0 value',D.Children[0],1,cu_px);
+
+  aKeyframe:=R.NestedRules[1];
+  AssertEquals('keyframe 1 selector count',1,aKeyframe.SelectorCount);
+  CheckLiteral('keyframe 1 selector',aKeyframe.Selectors[0],100,cuPercent);
+  D:=CheckDeclaration(aKeyframe,0,'top');
+  CheckLiteral('keyframe 1 value',D.Children[0],2,cu_px);
+end;
+
+procedure TTestCSSParser.TestKeyframesPercentageList;
+var
+  R: TCSSAtRuleElement;
+  aKeyframe: TCSSRuleElement;
+begin
+  R:=TCSSAtRuleElement(CheckClass('at',TCSSAtRuleElement,
+       ParseRule('@keyframes fade { 0%, 50%, to { top: 1px; } }')));
+  AssertEquals('keyframe count',1,R.NestedRuleCount);
+  aKeyframe:=R.NestedRules[0];
+  AssertEquals('keyframe selector count',3,aKeyframe.SelectorCount);
+  CheckLiteral('keyframe selector 0',aKeyframe.Selectors[0],0,cuPercent);
+  CheckLiteral('keyframe selector 1',aKeyframe.Selectors[1],50,cuPercent);
+  CheckSelector(aKeyframe,2,'to');
+  AssertEquals('keyframe declaration count',1,aKeyframe.ChildCount);
+  CheckDeclaration(aKeyframe,0,'top');
+end;
+
+procedure TTestCSSParser.TestKeyframesFloatPercentage;
+var
+  R: TCSSAtRuleElement;
+  aKeyframe: TCSSRuleElement;
+  aSel: TCSSFloatElement;
+begin
+  R:=TCSSAtRuleElement(CheckClass('at',TCSSAtRuleElement,
+       ParseRule('@keyframes fade { 12.5% { top: 1px; } }')));
+  AssertEquals('keyframe count',1,R.NestedRuleCount);
+  aKeyframe:=R.NestedRules[0];
+  AssertEquals('keyframe selector count',1,aKeyframe.SelectorCount);
+  aSel:=TCSSFloatElement(CheckClass('keyframe selector',TCSSFloatElement,aKeyframe.Selectors[0]));
+  AssertEquals('keyframe selector value',12.5,aSel.Value,0.001);
+  AssertEquals('keyframe selector units',cuPercent,aSel.Units);
+  CheckDeclaration(aKeyframe,0,'top');
+end;
+
+procedure TTestCSSParser.TestKeyframesMultipleDeclarations;
+var
+  R: TCSSAtRuleElement;
+  aKeyframe: TCSSRuleElement;
+  D: TCSSDeclarationElement;
+begin
+  R:=TCSSAtRuleElement(CheckClass('at',TCSSAtRuleElement,
+       ParseRule('@keyframes fade { 0% { top: 1px; left: 2px } }')));
+  AssertEquals('keyframe count',1,R.NestedRuleCount);
+  aKeyframe:=R.NestedRules[0];
+  AssertEquals('keyframe declaration count',2,aKeyframe.ChildCount);
+  D:=CheckDeclaration(aKeyframe,0,'top');
+  CheckLiteral('declaration 0 value',D.Children[0],1,cu_px);
+  D:=CheckDeclaration(aKeyframe,1,'left');
+  CheckLiteral('declaration 1 value',D.Children[0],2,cu_px);
+end;
+
+procedure TTestCSSParser.TestKeyframesVendorPrefixed;
+var
+  R: TCSSAtRuleElement;
+  aKeyframe: TCSSRuleElement;
+begin
+  R:=TCSSAtRuleElement(CheckClass('at',TCSSAtRuleElement,
+       ParseRule('@-webkit-keyframes fade { 0% { top: 1px; } }')));
+  AssertEquals('at keyword','@-webkit-keyframes',R.AtKeyWord);
+  AssertEquals('selector count',1,R.SelectorCount);
+  CheckSelector(R,0,'fade');
+  AssertEquals('keyframe count',1,R.NestedRuleCount);
+  aKeyframe:=R.NestedRules[0];
+  CheckLiteral('keyframe selector',aKeyframe.Selectors[0],0,cuPercent);
+
+  R:=TCSSAtRuleElement(CheckClass('at',TCSSAtRuleElement,
+       ParseRule('@-moz-keyframes fade { to { top: 1px; } }')));
+  AssertEquals('moz at keyword','@-moz-keyframes',R.AtKeyWord);
+  AssertEquals('moz keyframe count',1,R.NestedRuleCount);
+  CheckSelector(R.NestedRules[0],0,'to');
+end;
+
+procedure TTestCSSParser.TestKeyframesNameString;
+var
+  R: TCSSAtRuleElement;
+begin
+  R:=TCSSAtRuleElement(CheckClass('at',TCSSAtRuleElement,
+       ParseRule('@keyframes "fade" { }')));
+  AssertEquals('at keyword','@keyframes',R.AtKeyWord);
+  AssertEquals('selector count',1,R.SelectorCount);
+  CheckClass('name',TCSSStringElement,R.Selectors[0]);
+  CheckSelector(R,0,'fade');
+  AssertEquals('keyframe count',0,R.NestedRuleCount);
+end;
+
+procedure TTestCSSParser.TestKeyframesInMedia;
+var
+  M, R: TCSSAtRuleElement;
+  aKeyframe: TCSSRuleElement;
+begin
+  M:=TCSSAtRuleElement(CheckClass('at',TCSSAtRuleElement,
+       ParseRule('@media print { @keyframes fade { 0% { top: 1px; } } }')));
+  AssertEquals('at keyword','@media',M.AtKeyWord);
+  AssertEquals('nested rule count',1,M.NestedRuleCount);
+
+  R:=TCSSAtRuleElement(CheckClass('nested at',TCSSAtRuleElement,M.NestedRules[0]));
+  AssertEquals('nested at keyword','@keyframes',R.AtKeyWord);
+  CheckSelector(R,0,'fade');
+  AssertEquals('keyframe count',1,R.NestedRuleCount);
+  aKeyframe:=R.NestedRules[0];
+  CheckLiteral('keyframe selector',aKeyframe.Selectors[0],0,cuPercent);
+  CheckDeclaration(aKeyframe,0,'top');
+end;
+
+procedure TTestCSSParser.TestKeyframesAsString;
+var
+  R: TCSSAtRuleElement;
+begin
+  R:=TCSSAtRuleElement(CheckClass('at',TCSSAtRuleElement,
+       ParseRule('@keyframes fade { 0%, 50% { top: 1px; } to { top: 2px; } }')));
+  AssertEquals('AsString',
+    '@keyframes fade { 0%, 50% { top : 1px; } to { top : 2px; } }',R.AsString);
 end;
 
 procedure TTestCSSParser.TestSkipUnknownFunction;
@@ -1257,6 +1784,206 @@ begin
   AssertEquals('Declaration value count',1,aDecl.ChildCount);
   aIdent:=TCSSIdentifierElement(CheckClass('Declaration value',TCSSIdentifierElement,aDecl.Children[0]));
   AssertEquals('Declaration value','blue',aIdent.Value);
+end;
+
+procedure TTestCSSParser.TestNestedTypeRule;
+var
+  aRule, aNestedRule: TCSSRuleElement;
+  aClass: TCSSClassNameElement;
+  aIdent: TCSSIdentifierElement;
+begin
+  aRule:=ParseRule('.parent { div { } }');
+  AssertEquals('selector count',1,aRule.SelectorCount);
+  aClass:=TCSSClassNameElement(CheckClass('Selector',TCSSClassNameElement,aRule.Selectors[0]));
+  AssertEquals('Sel name','parent',aClass.Value);
+  AssertEquals('No declarations',0,aRule.ChildCount);
+  AssertEquals('Nested rule count',1,aRule.NestedRuleCount);
+  aNestedRule:=aRule.NestedRules[0];
+  AssertEquals('Nested selector count',1,aNestedRule.SelectorCount);
+  aIdent:=TCSSIdentifierElement(CheckClass('Nested selector',TCSSIdentifierElement,aNestedRule.Selectors[0]));
+  AssertEquals('Nested sel name','div',aIdent.Value);
+  AssertEquals('No nested declarations',0,aNestedRule.ChildCount);
+  AssertEquals('No nested rules',0,aNestedRule.NestedRuleCount);
+end;
+
+procedure TTestCSSParser.TestNestedTypeSpaceTypeRule;
+var
+  aRule, aNestedRule: TCSSRuleElement;
+  aIdent: TCSSIdentifierElement;
+  aBin: TCSSBinaryElement;
+begin
+  aRule:=ParseRule('.parent { div span { } }');
+  AssertEquals('Nested rule count',1,aRule.NestedRuleCount);
+  aNestedRule:=aRule.NestedRules[0];
+  AssertEquals('Nested selector count',1,aNestedRule.SelectorCount);
+  aBin:=TCSSBinaryElement(CheckClass('Nested selector',TCSSBinaryElement,aNestedRule.Selectors[0]));
+  AssertEquals('Nested selector operation',boWhiteSpace,aBin.Operation);
+  aIdent:=TCSSIdentifierElement(CheckClass('Nested selector left',TCSSIdentifierElement,aBin.Left));
+  AssertEquals('Nested selector left value','div',aIdent.Value);
+  aIdent:=TCSSIdentifierElement(CheckClass('Nested selector right',TCSSIdentifierElement,aBin.Right));
+  AssertEquals('Nested selector right value','span',aIdent.Value);
+end;
+
+procedure TTestCSSParser.TestNestedTypeMultiLineRule;
+var
+  aRule, aNestedRule: TCSSRuleElement;
+  aIdent: TCSSIdentifierElement;
+  aBin: TCSSBinaryElement;
+  aDecl: TCSSDeclarationElement;
+  LineLen: Integer;
+begin
+  // The look ahead for the '{' has to read the next lines and rewind, so the
+  // source positions must survive that.
+  aRule:=ParseRule(
+   '.parent {'+LineEnding
+  +'  div'+LineEnding
+  +'  span'+LineEnding
+  +'  {'+LineEnding
+  +'    color: red;'+LineEnding
+  +'  }'+LineEnding
+  +'}');
+  AssertEquals('Nested rule count',1,aRule.NestedRuleCount);
+  aNestedRule:=aRule.NestedRules[0];
+  AssertEquals('Nested selector count',1,aNestedRule.SelectorCount);
+  aBin:=TCSSBinaryElement(CheckClass('Nested selector',TCSSBinaryElement,aNestedRule.Selectors[0]));
+  AssertEquals('Nested selector operation',boWhiteSpace,aBin.Operation);
+  aIdent:=TCSSIdentifierElement(CheckClass('Nested selector left',TCSSIdentifierElement,aBin.Left));
+  AssertEquals('Nested selector left value','div',aIdent.Value);
+  AssertEquals('Nested selector left row',2,aIdent.SourceRow);
+  AssertEquals('Nested selector left col',2,aIdent.SourceCol);
+  aIdent:=TCSSIdentifierElement(CheckClass('Nested selector right',TCSSIdentifierElement,aBin.Right));
+  AssertEquals('Nested selector right value','span',aIdent.Value);
+  AssertEquals('Nested selector right row',3,aIdent.SourceRow);
+  // declaration: color: red
+  aDecl:=CheckDeclaration(aNestedRule,0,'color');
+  AssertEquals('Declaration row',5,aDecl.SourceRow);
+  AssertEquals('Declaration col',4,aDecl.SourceCol);
+  LineLen:=Length(LineEnding);
+  AssertEquals('Declaration source pos',
+    (9+LineLen)+(5+LineLen)+(6+LineLen)+(3+LineLen)+4,aDecl.SourcePos);
+end;
+
+procedure TTestCSSParser.TestNestedTypeCommaTypeRule;
+var
+  aRule, aNestedRule: TCSSRuleElement;
+  aIdent: TCSSIdentifierElement;
+begin
+  aRule:=ParseRule('.parent { div, span { } }');
+  AssertEquals('Nested rule count',1,aRule.NestedRuleCount);
+  aNestedRule:=aRule.NestedRules[0];
+  AssertEquals('Nested selector count',2,aNestedRule.SelectorCount);
+  aIdent:=TCSSIdentifierElement(CheckClass('Nested selector[0]',TCSSIdentifierElement,aNestedRule.Selectors[0]));
+  AssertEquals('Nested selector[0] value','div',aIdent.Value);
+  aIdent:=TCSSIdentifierElement(CheckClass('Nested selector[1]',TCSSIdentifierElement,aNestedRule.Selectors[1]));
+  AssertEquals('Nested selector[1] value','span',aIdent.Value);
+end;
+
+procedure TTestCSSParser.TestNestedTypeAttributeRule;
+var
+  aRule, aNestedRule: TCSSRuleElement;
+  aList: TCSSListElement;
+  aIdent: TCSSIdentifierElement;
+begin
+  // the '{' of the statement must be searched behind the edged brackets
+  aRule:=ParseRule('.parent { div[title=foo] { } }');
+  AssertEquals('Nested rule count',1,aRule.NestedRuleCount);
+  aNestedRule:=aRule.NestedRules[0];
+  AssertEquals('Nested selector count',1,aNestedRule.SelectorCount);
+  aList:=TCSSListElement(CheckClass('Nested selector',TCSSListElement,aNestedRule.Selectors[0]));
+  AssertEquals('Nested selector list count',2,aList.ChildCount);
+  aIdent:=TCSSIdentifierElement(CheckClass('Nested selector[0]',TCSSIdentifierElement,aList[0]));
+  AssertEquals('Nested selector[0] value','div',aIdent.Value);
+  CheckClass('Nested selector[1]',TCSSArrayElement,aList[1]);
+end;
+
+procedure TTestCSSParser.TestNestedTypeStringRule;
+var
+  aRule, aNestedRule: TCSSRuleElement;
+begin
+  // the '{' and the ';' within the string and the brackets must be skipped when
+  // searching the end of the statement
+  aRule:=ParseRule('.parent { div:not([title="a{b;c"]) { } }');
+  AssertEquals('Nested rule count',1,aRule.NestedRuleCount);
+  aNestedRule:=aRule.NestedRules[0];
+  AssertEquals('Nested selector count',1,aNestedRule.SelectorCount);
+  AssertEquals('No nested declarations',0,aNestedRule.ChildCount);
+end;
+
+procedure TTestCSSParser.TestNestedTypePseudoRule;
+var
+  aRule, aNestedRule: TCSSRuleElement;
+  aIdent: TCSSIdentifierElement;
+  aList: TCSSListElement;
+  aPseudo: TCSSPseudoClassElement;
+begin
+  // Note: 'div:hover' is a single ctkPSEUDO token, the same token as in the
+  // declaration 'color:red', so this needs a look ahead for the '{'.
+  aRule:=ParseRule('.parent { div:hover { } }');
+  AssertEquals('Nested rule count',1,aRule.NestedRuleCount);
+  aNestedRule:=aRule.NestedRules[0];
+  AssertEquals('Nested selector count',1,aNestedRule.SelectorCount);
+  aList:=TCSSListElement(CheckClass('Nested selector',TCSSListElement,aNestedRule.Selectors[0]));
+  AssertEquals('Nested selector list count',2,aList.ChildCount);
+  aIdent:=TCSSIdentifierElement(CheckClass('Nested selector[0]',TCSSIdentifierElement,aList[0]));
+  AssertEquals('Nested selector[0] value','div',aIdent.Value);
+  aPseudo:=TCSSPseudoClassElement(CheckClass('Nested selector[1]',TCSSPseudoClassElement,aList[1]));
+  AssertEquals('Nested selector[1] value',':hover',aPseudo.Value);
+end;
+
+procedure TTestCSSParser.TestNestedTypePseudoElementRule;
+var
+  aRule, aNestedRule: TCSSRuleElement;
+  aIdent: TCSSIdentifierElement;
+  aBin: TCSSBinaryElement;
+begin
+  aRule:=ParseRule('.parent { div::before { } }');
+  AssertEquals('Nested rule count',1,aRule.NestedRuleCount);
+  aNestedRule:=aRule.NestedRules[0];
+  AssertEquals('Nested selector count',1,aNestedRule.SelectorCount);
+  aBin:=TCSSBinaryElement(CheckClass('Nested selector',TCSSBinaryElement,aNestedRule.Selectors[0]));
+  AssertEquals('Nested selector operation',boDoubleColon,aBin.Operation);
+  aIdent:=TCSSIdentifierElement(CheckClass('Nested selector left',TCSSIdentifierElement,aBin.Left));
+  AssertEquals('Nested selector left value','div',aIdent.Value);
+  aIdent:=TCSSIdentifierElement(CheckClass('Nested selector right',TCSSIdentifierElement,aBin.Right));
+  AssertEquals('Nested selector right value','before',aIdent.Value);
+end;
+
+procedure TTestCSSParser.TestNestedStarRule;
+var
+  aRule, aNestedRule: TCSSRuleElement;
+  aIdent: TCSSIdentifierElement;
+begin
+  aRule:=ParseRule('.parent { * { } }');
+  AssertEquals('Nested rule count',1,aRule.NestedRuleCount);
+  aNestedRule:=aRule.NestedRules[0];
+  AssertEquals('Nested selector count',1,aNestedRule.SelectorCount);
+  aIdent:=TCSSIdentifierElement(CheckClass('Nested selector',TCSSIdentifierElement,aNestedRule.Selectors[0]));
+  AssertEquals('Nested sel name','*',aIdent.Value);
+end;
+
+procedure TTestCSSParser.TestNestedRule_DeclarationNoSpace;
+var
+  aRule: TCSSRuleElement;
+  aDecl: TCSSDeclarationElement;
+  aIdent: TCSSIdentifierElement;
+begin
+  // 'color:red' has no space, so the ':red' is a ctkPSEUDO token, but it is a
+  // declaration, not a nested rule.
+  aRule:=ParseRule('.parent { color:red; }');
+  AssertEquals('Nested rule count',0,aRule.NestedRuleCount);
+  aDecl:=CheckDeclaration(aRule,0,'color');
+  AssertEquals('Declaration value count',1,aDecl.ChildCount);
+  aIdent:=TCSSIdentifierElement(CheckClass('Declaration value',TCSSIdentifierElement,aDecl.Children[0]));
+  AssertEquals('Declaration value','red',aIdent.Value);
+end;
+
+procedure TTestCSSParser.TestNestedRule_CustomProperty;
+var
+  aRule: TCSSRuleElement;
+begin
+  aRule:=ParseRule('.parent { --my-var: 1px; }');
+  AssertEquals('Nested rule count',0,aRule.NestedRuleCount);
+  CheckDeclaration(aRule,0,'--my-var');
 end;
 
 procedure TTestCSSParser.TestDeclarationSourcePosition;

@@ -2561,7 +2561,9 @@ const
          'm_parallelfor',         { run `for parallel ... do` body across worker threads }
          'm_int128',              { 128 bit integer types Int128/UInt128 with literals beyond 64 bit }
          'm_out_var',             { inline out-variable declaration and `_` discard at call sites }
-         'm_prepost_incdec'       { PreInc/PostInc/PreDec/PostDec intrinsics returning a value }
+         'm_prepost_incdec',      { PreInc/PostInc/PreDec/PostDec intrinsics returning a value }
+         'm_type_inquiry',        { the compile time operator "type of <operand>" }
+         'm_record_composition'   { enables record composition }
        );
        { optimizer }
        optimizerswitchname : array[toptimizerswitch] of string[50] =
@@ -3388,6 +3390,7 @@ const
      (mask:oo_is_invokable;       str:'IsInvokable'),
      (mask:oo_is_capturer;        str:'IsCapturer'),
      (mask:oo_inherits_not_specialized; str:'InheritedNotSpecialized'),
+     (mask:oo_composites_generic; str:'CompositesGeneric'),
      (mask:oo_has_compositions;   str:'HasCompositions'),
      (mask:oo_has_field_sizing;   str:'HasFieldSizing')
   );
@@ -3395,7 +3398,7 @@ var
   i      : longint;
   first  : boolean;
 begin
-  ppufile.getset(tppuset4(current_objectoptions));
+  ppufile.getset(tppuset5(current_objectoptions));
   if current_objectoptions<>[] then
    begin
      if ObjDef <> nil then

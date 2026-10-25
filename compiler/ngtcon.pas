@@ -721,7 +721,12 @@ function get_next_varsym(def: tabstractrecorddef; const SymList:TFPHashObjectLis
            scurrency:
              begin
                 if is_constintnode(node) then
-                  intvalue:=tordconstnode(node).value*10000
+                  begin
+                    if nf_is_currency in node.flags then
+                      intvalue:=tordconstnode(node).value
+                    else
+                      intvalue:=tordconstnode(node).value*10000
+                  end
                 { allow bootstrapping }
                 else if is_constrealnode(node) then
                   intvalue:=PInt64(@trealconstnode(node).value_currency)^
@@ -770,7 +775,10 @@ function get_next_varsym(def: tabstractrecorddef; const SymList:TFPHashObjectLis
              { the round is necessary for native compilers where comp isn't a float }
              ftcb.emit_tai(tai_realconst.create_s64compreal(round(value)),def);
            s64currency:
-             ftcb.emit_tai(tai_realconst.create_s64compreal(round(value*10000)),def);
+             if nf_is_currency in node.flags then
+               ftcb.emit_tai(tai_realconst.create_s64compreal(round(value)),def)
+             else
+               ftcb.emit_tai(tai_realconst.create_s64compreal(round(value*10000)),def);
            s128real:
              ftcb.emit_tai(tai_realconst.create_s128real(value),def);
         end;
@@ -1076,9 +1084,6 @@ function get_next_varsym(def: tabstractrecorddef; const SymList:TFPHashObjectLis
 
 
     procedure tasmlisttypedconstbuilder.tc_emit_setdef(def: tsetdef; var node: tnode);
-      type
-         setbytes = array[0..31] of byte;
-         Psetbytes = ^setbytes;
       var
         i: longint;
         setval: cardinal;
@@ -1102,12 +1107,12 @@ function get_next_varsym(def: tabstractrecorddef; const SymList:TFPHashObjectLis
                     if source_info.endian=target_info.endian then
                       begin
                         for i:=0 to node.resultdef.size-1 do
-                          ftcb.emit_tai(tai_const.create_8bit(Psetbytes(tsetconstnode(node).value_set)^[i]),u8inttype);
+                          ftcb.emit_tai(tai_const.create_8bit(tsetconstnode(node).getbyte(i)),u8inttype);
                       end
                     else
                       begin
                         for i:=0 to node.resultdef.size-1 do
-                          ftcb.emit_tai(tai_const.create_8bit(reverse_byte(Psetbytes(tsetconstnode(node).value_set)^[i])),u8inttype);
+                          ftcb.emit_tai(tai_const.create_8bit(reverse_byte(tsetconstnode(node).getbyte(i))),u8inttype);
                       end;
                   end
                 else
@@ -1119,12 +1124,12 @@ function get_next_varsym(def: tabstractrecorddef; const SymList:TFPHashObjectLis
                     if source_info.endian=target_info.endian then
                       begin
                         for i:=0 to node.resultdef.size-1 do
-                          setval:=setval or (Psetbytes(tsetconstnode(node).value_set)^[i] shl (i*8));
+                          setval:=setval or (tsetconstnode(node).getbyte(i) shl (i*8));
                       end
                     else
                       begin
                         for i:=0 to node.resultdef.size-1 do
-                          setval:=setval or (reverse_byte(Psetbytes(tsetconstnode(node).value_set)^[i]) shl (i*8));
+                          setval:=setval or (reverse_byte(tsetconstnode(node).getbyte(i)) shl (i*8));
                       end;
                     case def.size of
                       1:

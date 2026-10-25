@@ -127,6 +127,8 @@ type
 
   TPAMessageEvent = procedure(Sender: TObject; Msg: TPAMessage) of object;
 
+  TPAUnresolvedRefEvent = procedure(Sender: TObject; El: TPasElement) of object;
+
   TPAIdentifierAccess = (
     paiaNone,
     paiaRead,
@@ -143,6 +145,8 @@ type
     procedure SetElement(AValue: TPasElement);
   public
     Access: TPAIdentifierAccess;
+    // accesses recorded for variables, arguments, properties and results; an export walk counts as an access on each side the declaration supports
+    ReadCount, WriteCount: integer;
     destructor Destroy; override;
     property Element: TPasElement read FElement write SetElement;
   end;
@@ -240,11 +244,15 @@ type
   private
     FModeChecked: array[TPAUseMode] of TPasAnalyzerKeySet; // tree of TElement
     FOtherChecked: array[TPAOtherCheckedEl] of TPasAnalyzerKeySet; // tree of TElement
+    FIgnoreImplicitSystemUses: boolean;
+    FIsComplete: boolean;
     FOnMessage: TPAMessageEvent;
+    FOnUnresolvedRef: TPAUnresolvedRefEvent;
     FOptions: TPasAnalyzerOptions;
     FOverrideLists: TPasAnalyzerKeySet; // tree of TPAOverrideList sorted for Element
     FResolver: TPasResolver;
     FScopeModule: TPasModule;
+    FUnusedElements: TFPList; // list of TPasElement
     FUsedElements: TPasAnalyzerKeySet; // tree of TPAElement sorted for Element
     procedure UseElType(El: TPasElement; aType: TPasType; Mode: TPAUseMode); inline;
     function AddOverride(OverriddenEl, OverrideEl: TPasElement): boolean;
@@ -261,6 +269,9 @@ type
     function PAElementExists(El: TPasElement): boolean; inline;
     procedure CreateTree; virtual;
     function MarkElementAsUsed(El: TPasElement; aClass: TPAElementClass = nil): boolean; // true if new
+    procedure AddUnusedElement(El: TPasElement);
+    procedure MarkIncomplete(El: TPasElement);
+    procedure CheckUsesClauseComplete(Section: TPasSection);
     function ElementVisited(El: TPasElement; Mode: TPAUseMode): boolean; overload;
     function ElementVisited(El: TPasElement; OtherCheck: TPAOtherCheckedEl): boolean; overload;
     procedure MarkImplScopeRef(El, RefEl: TPasElement; Access: TPSRefAccess);
@@ -279,6 +290,8 @@ type
     procedure UseExprRef(El: TPasElement; Expr: TPasExpr;
       Access: TResolvedRefAccess; UseFull: boolean); virtual;
     procedure UseInheritedExpr(El: TInheritedExpr); virtual;
+    procedure UseCaseExpr(El: TCaseExpr); virtual;
+    procedure UseTryExceptExpr(El: TTryExceptExpr); virtual;
     procedure UseInlineSpecializeExpr(El: TInlineSpecializeExpr); virtual;
     procedure UseScopeReferences(Refs: TPasScopeReferences); virtual;
     procedure UseProcedure(Proc: TPasProcedure); virtual;
@@ -327,7 +340,12 @@ type
     class function GetWarnIdentifierNumbers(Identifier: string;
       out MsgNumbers: TIntegerDynArray): boolean; virtual;
     function GetUsedElements: TFPList; virtual; // list of TPAElement
+    function GetUnusedElements: TFPList; virtual; // list of TPasElement, valid after EmitModuleHints
+    property IgnoreImplicitSystemUses: boolean read FIgnoreImplicitSystemUses
+      write FIgnoreImplicitSystemUses; // if set, an implicitly imported System unit never makes the closure partial
+    property IsComplete: boolean read FIsComplete; // False if a used unit was not loaded or was parsed interface-only
     property OnMessage: TPAMessageEvent read FOnMessage write FOnMessage;
+    property OnUnresolvedRef: TPAUnresolvedRefEvent read FOnUnresolvedRef write FOnUnresolvedRef; // fired with the TPasUsesUnit that made the closure partial
     property Options: TPasAnalyzerOptions read FOptions write SetOptions;
     property Resolver: TPasResolver read FResolver write FResolver;
     property ScopeModule: TPasModule read FScopeModule write FScopeModule; // if set analyzing a unit else whole program
@@ -789,6 +807,8 @@ end;
 procedure TPasAnalyzer.UpdateAccess(IsWrite: Boolean; IsRead: Boolean;
   Usage: TPAElement);
 begin
+  if IsRead then inc(Usage.ReadCount);
+  if IsWrite then inc(Usage.WriteCount);
   if IsRead then
     case Usage.Access of
       paiaNone: Usage.Access:=paiaRead;
@@ -971,6 +991,42 @@ begin
       // an identifier of this unit is used -> mark unit
       if MarkModule(CurModule) then
         UseModule(CurModule,paumElement);
+    end;
+end;
+
+procedure TPasAnalyzer.AddUnusedElement(El: TPasElement);
+begin
+  FUnusedElements.Add(El);
+end;
+
+procedure TPasAnalyzer.MarkIncomplete(El: TPasElement);
+begin
+  FIsComplete:=false;
+  if Assigned(FOnUnresolvedRef) then
+    FOnUnresolvedRef(Self,El);
+end;
+
+procedure TPasAnalyzer.CheckUsesClauseComplete(Section: TPasSection);
+var
+  i: Integer;
+  UsesClause: TPasUsesClause;
+begin
+  if Section=nil then exit;
+  UsesClause:=Section.UsesClause;
+  for i:=0 to length(UsesClause)-1 do
+    begin
+    // a nil name expression marks an entry the parser added implicitly
+    if FIgnoreImplicitSystemUses and (UsesClause[i].Expr=nil)
+        and (CompareText(UsesClause[i].Name,'system')=0) then
+      continue;
+    if UsesClause[i].Module is TPasModule then
+      begin
+      // a nil implementation section means the unit was parsed interface-only
+      if TPasModule(UsesClause[i].Module).ImplementationSection=nil then
+        MarkIncomplete(UsesClause[i]);
+      end
+    else
+      MarkIncomplete(UsesClause[i]);
     end;
 end;
 
@@ -1234,6 +1290,8 @@ begin
     end
   else if (C=TPasAliasType) or (C=TPasTypeAliasType) then
     UseSubEl(TPasAliasType(El).DestType)
+  else if C=TPasTypeOfType then
+    UseSubEl(TPasTypeOfType(El).DestType)
   else if C=TPasEnumType then
   else if C=TPasSetType then
     UseSubEl(TPasSetType(El).EnumType)
@@ -1390,6 +1448,8 @@ begin
       UseSection(aModule.InterfaceSection,Mode);
       // Note: implementation can not be used directly from outside
       end;
+    // the implementation section is never passed to UseSection
+    CheckUsesClauseComplete(aModule.ImplementationSection);
     end;
   UseInitFinal(aModule.InitializationSection);
   UseInitFinal(aModule.FinalizationSection);
@@ -1433,6 +1493,7 @@ begin
   {$ENDIF}
 
   // used units
+  CheckUsesClauseComplete(Section);
   UsesClause:=Section.UsesClause;
   for i:=0 to length(UsesClause)-1 do
     begin
@@ -1751,6 +1812,12 @@ begin
     Access:=Ref.Access;
     MarkImplScopeRef(El,Decl,ResolvedToPSRefAccess[Access]);
     UseElement(Decl,Access,false);
+    // record composition: the member is accessed via the composition fields
+    for i:=0 to length(Ref.CompositionPath)-1 do
+      if Decl is TPasVariable then
+        UseElement(Ref.CompositionPath[i],Access,false)
+      else
+        UseElement(Ref.CompositionPath[i],rraRead,false);
     if Ref.Context<>nil then
       begin
       if Ref.Context.ClassType=TResolvedRefCtxAttrProc then
@@ -1844,6 +1911,11 @@ begin
       UseExpr(Bin.Right);
       end;
     end
+  else if (Ref<>nil)
+      and ((rrfTypeOfCast in Ref.Flags)
+        or ((C=TUnaryExpr) and (TUnaryExpr(El).OpCode=eopTypeOf))) then
+    // "type of Operand" and "type of Callee(Param)": Operand and Callee are
+    // only used for their type
   else if C=TUnaryExpr then
     UseExpr(TUnaryExpr(El).Operand)
   else if C=TParamsExpr then
@@ -1868,10 +1940,53 @@ begin
     UseInheritedExpr(TInheritedExpr(El))
   else if C=TProcedureExpr then
     UseProcedure(TProcedureExpr(El).Proc)
+  else if C=TIfExpr then
+    begin
+    UseExpr(TIfExpr(El).ConditionExpr);
+    UseExpr(TIfExpr(El).ThenExpr);
+    UseExpr(TIfExpr(El).ElseExpr);
+    end
+  else if C=TCaseExpr then
+    UseCaseExpr(TCaseExpr(El))
+  else if C=TTryExceptExpr then
+    UseTryExceptExpr(TTryExceptExpr(El))
   else if C=TInlineSpecializeExpr then
     UseInlineSpecializeExpr(TInlineSpecializeExpr(El))
   else
     RaiseNotSupported(20170307085444,El);
+end;
+
+procedure TPasAnalyzer.UseCaseExpr(El: TCaseExpr);
+var
+  i, j: Integer;
+  Branch: TCaseExprBranch;
+begin
+  UseExpr(El.CaseExpr);
+  for i:=0 to El.Branches.Count-1 do
+    begin
+    Branch:=TCaseExprBranch(El.Branches[i]);
+    for j:=0 to Branch.Labels.Count-1 do
+      UseExpr(TPasExpr(Branch.Labels[j]));
+    UseExpr(Branch.Value);
+    end;
+  if El.ElseExpr<>nil then
+    UseExpr(El.ElseExpr);
+end;
+
+procedure TPasAnalyzer.UseTryExceptExpr(El: TTryExceptExpr);
+var
+  i: Integer;
+  Branch: TTryExceptExprOn;
+begin
+  UseExpr(El.TryExpr);
+  for i:=0 to El.OnBranches.Count-1 do
+    begin
+    Branch:=TTryExceptExprOn(El.OnBranches[i]);
+    // Note: VarEl is marked when actually used
+    UseElType(Branch,Branch.TypeEl,paumElement);
+    UseExpr(Branch.Value);
+    end;
+  UseExpr(El.ElseExpr);
 end;
 
 procedure TPasAnalyzer.UseExprRef(El: TPasElement; Expr: TPasExpr;
@@ -1925,6 +2040,12 @@ begin
     Unary:=TUnaryExpr(Expr);
     if Unary.OpCode in [eopAdd,eopSubtract,eopAddress,eopDeref,eopMemAddress] then
       UseExprRef(El,Unary.Operand,rraRead,false)
+    else if Unary.OpCode=eopTypeOf then
+      begin
+      // a "type of" typecast passes the access, a "type of" type is not a value
+      if not (Unary.CustomData is TResolvedReference) then
+        UseExprRef(El,Unary.Operand,Access,UseFull);
+      end
     else
       RaiseNotSupported(20181015193334,Expr,OpcodeStrings[Unary.OpCode]);
     end
@@ -2151,6 +2272,12 @@ begin
       UseElType(El,TPasAliasType(El).DestType,Mode);
       if C=TPasTypeAliasType then
         UseExpr(TPasTypeAliasType(El).Expr);
+      end
+    else if C=TPasTypeOfType then
+      begin
+      // the operand Expr is never executed
+      if not MarkElementAsUsed(El) then exit;
+      UseElType(El,TPasTypeOfType(El).DestType,Mode);
       end
     else if C=TPasArrayType then
       begin
@@ -2528,6 +2655,8 @@ var
 
   procedure UpdateVarAccess(IsRead, IsWrite: boolean);
   begin
+    if IsRead then inc(Usage.ReadCount);
+    if IsWrite then inc(Usage.WriteCount);
     if IsRead then
       case Usage.Access of
         paiaNone: begin Usage.Access:=paiaRead; UseRead:=true; end;
@@ -2908,6 +3037,7 @@ begin
         // declaration was never used
         if IsSpecializedGenericType(Decl) then
           continue; // no hints for not used specializations
+        AddUnusedElement(Decl);
         EmitMessage(20170311231734,mtHint,nPALocalXYNotUsed,
           sPALocalXYNotUsed,[Decl.ElementTypeName,Decl.Name],Decl);
         end;
@@ -2957,6 +3087,8 @@ begin
     if IsRightStr(El.Name,Resolver.AnonymousElTypePostfix) then
       exit; // anonymous type
 
+    AddUnusedElement(El);
+
     if (El.Visibility in [visPrivate,visStrictPrivate]) then
       EmitMessage(20170312000020,mtHint,nPAPrivateTypeXNeverUsed,
         sPAPrivateTypeXNeverUsed,[El.FullName],El)
@@ -3001,6 +3133,7 @@ begin
   if Usage=nil then
     begin
     // not used
+    AddUnusedElement(El);
     if El.Visibility in [visPrivate,visStrictPrivate] then
       begin
       if El.ClassType=TPasConst then
@@ -3089,6 +3222,8 @@ begin
           exit; // a specialization of this generic procedure is used
         end;
 
+    AddUnusedElement(El);
+
     if El.Visibility in [visPrivate,visStrictPrivate] then
       EmitMessage(20170312093348,mtHint,nPAPrivateMethodIsNeverUsed,
         sPAPrivateMethodIsNeverUsed,[El.FullName],El)
@@ -3118,6 +3253,7 @@ begin
       if (Usage=nil) or (Usage.Access=paiaNone) then
         begin
         // parameter was never used
+        AddUnusedElement(Arg);
         if (Arg.Parent is TPasProcedureType) and (Arg.Parent.Parent is TPasProcedure)
             and ([pmVirtual,pmOverride]*TPasProcedure(Arg.Parent.Parent).Modifiers<>[]) then
           EmitMessage(20180625153623,mtHint,nPAParameterInOverrideNotUsed,
@@ -3212,6 +3348,8 @@ begin
     {$else}
     @ComparePAOverrideLists,@CompareElementWithPAOverrideList
     {$endif});
+  FUnusedElements:=TFPList.Create;
+  FIsComplete:=true;
 end;
 
 destructor TPasAnalyzer.Destroy;
@@ -3221,6 +3359,7 @@ var
 begin
   Clear;
   FreeAndNil(FOverrideLists);
+  FreeAndNil(FUnusedElements);
   FreeAndNil(FUsedElements);
   for m in TPAUseMode do
     FreeAndNil(FModeChecked[m]);
@@ -3236,6 +3375,8 @@ var
 begin
   FOverrideLists.FreeItems;
   FUsedElements.FreeItems;
+  FUnusedElements.Clear;
+  FIsComplete:=true;
   for m in TPAUseMode do
     FModeChecked[m].Clear;
   for oc in TPAOtherCheckedEl do
@@ -3506,6 +3647,15 @@ end;
 function TPasAnalyzer.GetUsedElements: TFPList;
 begin
   Result:=FUsedElements.GetList;
+end;
+
+function TPasAnalyzer.GetUnusedElements: TFPList;
+var
+  i: Integer;
+begin
+  Result:=TFPList.Create;
+  for i:=0 to FUnusedElements.Count-1 do
+    Result.Add(FUnusedElements[i]);
 end;
 
 end.

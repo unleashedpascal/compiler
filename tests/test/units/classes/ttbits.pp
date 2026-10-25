@@ -1,6 +1,6 @@
 program ttbits;
 
-{$MODE objfpc}{$H+} {$coperators on} {$typedaddress on}
+{$MODE objfpc}{$H+} {$coperators on} {$typedaddress on} {$modeswitch advancedrecords} {$modeswitch duplicatelocals}
 
 uses
   Classes, SysUtils, Math;
@@ -71,6 +71,113 @@ begin
     result[1 + i] := Bool01[b[i]];
 end;
 
+const
+  Srcs: array[0 .. 11] of string =
+  (
+    '', '0', '1', '10101',
+    // 1 zero, 1 one, 2 zeros, 2 ones, ..., 11 zeros, 11 ones
+    '010011000111000011110000011111000000111111000000011111110000000011111111000000000111111111000000000011111111110000000000011111111111',
+    // 1 one, 1 zero, 2 ones, 2 zeros, ..., 11 ones, 11 zeros
+    '101100111000111100001111100000111111000000111111100000001111111100000000111111111000000000111111111100000000001111111111100000000000',
+    // 11 zeros, 11 ones, 10 zeros, 10 ones, ..., 1 zero, 1 one
+    '000000000001111111111100000000001111111111000000000111111111000000001111111100000001111111000000111111000001111100001111000111001101',
+    // 11 ones, 11 zeros, 10 ones, 10 zeros, ..., 1 one, 1 zero
+    '111111111110000000000011111111110000000000111111111000000000111111110000000011111110000000111111000000111110000011110000111000110010',
+
+    // 1 zero, 1 one, 2 zeros, 2 ones, ..., 23 zeros, 23 ones
+    '010011000111000011110000011111000000111111000000011111110000000011111111000000000111111111000000000011111111110000000000011111111111' +
+    '000000000000111111111111000000000000011111111111110000000000000011111111111111000000000000000111111111111111000000000000000011111111' +
+    '111111110000000000000000011111111111111111000000000000000000111111111111111111000000000000000000011111111111111111110000000000000000' +
+    '000011111111111111111111000000000000000000000111111111111111111111000000000000000000000011111111111111111111110000000000000000000000' +
+    '011111111111111111111111',
+
+    // 1 one, 1 zero, 2 ones, 2 zeros, ..., 23 ones, 23 zeros
+    '101100111000111100001111100000111111000000111111100000001111111100000000111111111000000000111111111100000000001111111111100000000000' +
+    '111111111111000000000000111111111111100000000000001111111111111100000000000000111111111111111000000000000000111111111111111100000000' +
+    '000000001111111111111111100000000000000000111111111111111111000000000000000000111111111111111111100000000000000000001111111111111111' +
+    '111100000000000000000000111111111111111111111000000000000000000000111111111111111111111100000000000000000000001111111111111111111111' +
+    '100000000000000000000000',
+
+    // 23 zeros, 23 ones, 22 zeros, 22 ones, ..., 1 zero, 1 one
+    '000000000000000000000001111111111111111111111100000000000000000000001111111111111111111111000000000000000000000111111111111111111111' +
+    '000000000000000000001111111111111111111100000000000000000001111111111111111111000000000000000000111111111111111111000000000000000001' +
+    '111111111111111100000000000000001111111111111111000000000000000111111111111111000000000000001111111111111100000000000001111111111111' +
+    '000000000000111111111111000000000001111111111100000000001111111111000000000111111111000000001111111100000001111111000000111111000001' +
+    '111100001111000111001101',
+
+    // 23 ones, 23 zeros, 22 ones, 22 zeros, ..., 1 one, 1 zero
+    '111111111111111111111110000000000000000000000011111111111111111111110000000000000000000000111111111111111111111000000000000000000000' +
+    '111111111111111111110000000000000000000011111111111111111110000000000000000000111111111111111111000000000000000000111111111111111110' +
+    '000000000000000011111111111111110000000000000000111111111111111000000000000000111111111111110000000000000011111111111110000000000000' +
+    '111111111111000000000000111111111110000000000011111111110000000000111111111000000000111111110000000011111110000000111111000000111110' +
+    '000011110000111000110010'
+  );
+
+procedure TestDumpLoadText;
+const
+  S01: array[0 .. 1, boolean] of string = (('0', '1'), ('Zero', 'One'));
+var
+  b, reload: TBits;
+  src, got, expect: string;
+  i, is01, start, count: SizeInt;
+  ok: boolean;
+begin
+  b := nil; reload := nil;
+  try
+    b := TBits.Create;
+    reload := TBits.Create;
+    for src in Srcs do
+    begin
+      start := 0;
+      count := length(src);
+      if count >= 3 then
+      begin
+        start += 1;
+        count -= 2;
+      end;
+      for i := 1 to length(src) do
+        b[i - 1] := src[i] <> '0';
+      for is01 := 0 to High(S01) do
+      begin
+        expect := '';
+        for i := start to start + count - 1 do
+          expect += S01[is01, src[1 + i] <> '0'];
+        got := b.DumpText(start, count, S01[is01, false], S01[is01, true]);
+        if got <> expect then
+        begin
+          Fail('DumpText(''' + src + ''', ''' + S01[is01, false] + ''', ''' + S01[is01, true] + ''') failed:' + LineEnding +
+            'got' + LineEnding +
+            got + LineEnding +
+            'expected' + LineEnding +
+            expect);
+          continue;
+        end;
+
+        reload.Size := 0;
+        reload.LoadText(1, count, S01[is01, false], S01[is01, true], got);
+        ok := true;
+        for i := 0 to count - 1 do
+          if reload[1 + i] <> (src[1 + start + i] <> '0') then
+          begin
+            ok := false;
+            break;
+          end;
+
+        if not ok then
+        begin
+          Fail('LoadText(''' + got + ''') failed:' + LineEnding +
+            'got' + LineEnding +
+            Dump(reload) + LineEnding +
+            'expected' + LineEnding +
+            Copy(Dump(b), 1 + start, count));
+        end;
+      end;
+    end;
+  finally
+    b.Free; reload.Free;
+  end;
+end;
+
 type
   BinOpEnum = (op_And, op_Or, op_Xor, op_Not);
 
@@ -130,47 +237,6 @@ begin
 end;
 
 procedure TestBinOps;
-const
-  Srcs: array[0 .. 11] of string =
-  (
-    '', '0', '1', '10101',
-    // 1 zero, 1 one, 2 zeros, 2 ones, ..., 11 zeros, 11 ones
-    '010011000111000011110000011111000000111111000000011111110000000011111111000000000111111111000000000011111111110000000000011111111111',
-    // 1 one, 1 zero, 2 ones, 2 zeros, ..., 11 ones, 11 zeros
-    '101100111000111100001111100000111111000000111111100000001111111100000000111111111000000000111111111100000000001111111111100000000000',
-    // 11 zeros, 11 ones, 10 zeros, 10 ones, ..., 1 zero, 1 one
-    '000000000001111111111100000000001111111111000000000111111111000000001111111100000001111111000000111111000001111100001111000111001101',
-    // 11 ones, 11 zeros, 10 ones, 10 zeros, ..., 1 one, 1 zero
-    '111111111110000000000011111111110000000000111111111000000000111111110000000011111110000000111111000000111110000011110000111000110010',
-
-    // 1 zero, 1 one, 2 zeros, 2 ones, ..., 23 zeros, 23 ones
-    '010011000111000011110000011111000000111111000000011111110000000011111111000000000111111111000000000011111111110000000000011111111111' +
-    '000000000000111111111111000000000000011111111111110000000000000011111111111111000000000000000111111111111111000000000000000011111111' +
-    '111111110000000000000000011111111111111111000000000000000000111111111111111111000000000000000000011111111111111111110000000000000000' +
-    '000011111111111111111111000000000000000000000111111111111111111111000000000000000000000011111111111111111111110000000000000000000000' +
-    '011111111111111111111111',
-
-    // 1 one, 1 zero, 2 ones, 2 zeros, ..., 23 ones, 23 zeros
-    '101100111000111100001111100000111111000000111111100000001111111100000000111111111000000000111111111100000000001111111111100000000000' +
-    '111111111111000000000000111111111111100000000000001111111111111100000000000000111111111111111000000000000000111111111111111100000000' +
-    '000000001111111111111111100000000000000000111111111111111111000000000000000000111111111111111111100000000000000000001111111111111111' +
-    '111100000000000000000000111111111111111111111000000000000000000000111111111111111111111100000000000000000000001111111111111111111111' +
-    '100000000000000000000000',
-
-    // 23 zeros, 23 ones, 22 zeros, 22 ones, ..., 1 zero, 1 one
-    '000000000000000000000001111111111111111111111100000000000000000000001111111111111111111111000000000000000000000111111111111111111111' +
-    '000000000000000000001111111111111111111100000000000000000001111111111111111111000000000000000000111111111111111111000000000000000001' +
-    '111111111111111100000000000000001111111111111111000000000000000111111111111111000000000000001111111111111100000000000001111111111111' +
-    '000000000000111111111111000000000001111111111100000000001111111111000000000111111111000000001111111100000001111111000000111111000001' +
-    '111100001111000111001101',
-
-    // 23 ones, 23 zeros, 22 ones, 22 zeros, ..., 1 one, 1 zero
-    '111111111111111111111110000000000000000000000011111111111111111111110000000000000000000000111111111111111111111000000000000000000000' +
-    '111111111111111111110000000000000000000011111111111111111110000000000000000000111111111111111111000000000000000000111111111111111110' +
-    '000000000000000011111111111111110000000000000000111111111111111000000000000000111111111111110000000000000011111111111110000000000000' +
-    '111111111111000000000000111111111110000000000011111111110000000000111111111000000000111111110000000011111110000000111111000000111110' +
-    '000011110000111000110010'
-  );
 var
   op: BinOpEnum;
   iA, iB: SizeInt;
@@ -188,7 +254,7 @@ type
 var
   b: TBits;
   direction: DirectionEnum;
-  found, iPos, expected: SizeInt;
+  found, iPos, expected, foundRO: SizeInt;
   msg: string;
 begin
   b := nil;
@@ -200,6 +266,7 @@ begin
         LeftToRight:
           begin
             found := b.FindFirstBit(state);
+            foundRO := b.Find(state, 0);
             iPos := 0;
           end;
         RightToLeft:
@@ -213,6 +280,7 @@ begin
               b.SetIndex(b.Size - 1);
               if b[b.Size - 1] = state then found := b.Size - 1 else found := b.FindPrevBit;
             end;
+            foundRO := b.FindRev(state, b.Size - 1);
             iPos := High(positions);
           end;
       end;
@@ -221,10 +289,19 @@ begin
         if (iPos >= 0) and (iPos < length(positions)) then expected := positions[iPos] else expected := -1;
         if found <> expected then
         begin
-          WriteStr(msg, 'Finds failed:' + LineEnding +
+          WriteStr(msg, 'FindFirst/NextBit failed:' + LineEnding +
             'src = ' + src + LineEnding +
             'state = ', Bool01[state], ', dir = ', direction, ', iPos = ', iPos, ', found = ', found, ', expected = ', expected);
           Fail(msg);
+          break;
+        end;
+        if foundRO <> expected then
+        begin
+          WriteStr(msg, 'Find0/1 failed:' + LineEnding +
+            'src = ' + src + LineEnding +
+            'state = ', Bool01[state], ', dir = ', direction, ', iPos = ', iPos, ', foundRO = ', foundRO, ', expected = ', expected);
+          Fail(msg);
+          break;
         end;
         if expected < 0 then break;
         case direction of
@@ -232,11 +309,13 @@ begin
             begin
               iPos += 1;
               found := b.FindNextBit;
+              foundRO := b.Find(state, foundRO + 1);
             end;
           RightToLeft:
             begin
               iPos -= 1;
               found := b.FindPrevBit;
+              foundRO := b.FindRev(state, foundRO - 1);
             end;
         end;
       until false;
@@ -332,11 +411,309 @@ begin
   end;
 end;
 
+type
+  BitfieldRangeTest = record
+    procedure PerformOnSrc;
+    procedure PrepareScratch;
+    function ExpectMatchesResb: boolean;
+    function SrcBitfieldPiece: string;
+    function ResbAndExpectedPiece: string;
+    class function BytesToString(b: pByte; n: SizeUint): string; static;
+    class function BitsToString(b: TBits; n: SizeUint): string; static;
+
+  const
+    BaseBits = bitsizeof(TBitsBase);
+    Size = 8 * BaseBits;
+
+    PositionBases: array[0 .. 3] of uint16 =
+    (
+      BaseBits, BaseBits + BaseBits div 2, Size div 2, Size div 2 + BaseBits div 2
+    );
+
+    CountBases: array[0 .. 3] of uint16 =
+    (
+      0, BaseBits, 4 * BaseBits, 6 * BaseBits
+    );
+
+    Fuzz: array[0 .. 4] of int8 =
+    (
+      -5, -2, 0, +2, +5
+    );
+
+  var
+    src, expect: array[0 .. Size - 1] of byte;
+    srcb, resb: TBits;
+    bin: array[0 .. 2 { first and last guard bytes } + (Size + bitsizeof(byte) - 1) div bitsizeof(byte) - 1] of byte;
+  end;
+
+procedure BitfieldRangeTest.PerformOnSrc;
+var
+  srcBase, srcFuzz, dstBase, dstFuzz, countBase, countFuzz, src, dst, count, i, pcExp, pcGot: SizeInt;
+  opTruth: TBitsOpTruth;
+begin
+  for opTruth in TBitsOpTruth do
+  begin
+    PrepareScratch;
+    resb.OpRange(0, resb, Size div 2, Size div 2, opTruth);
+    for i := 0 to Size div 2 - 1 do
+      expect[i] := opTruth shr (self.src[i] shl 1 or self.src[Size div 2 + i]) and 1;
+    if not ExpectMatchesResb then
+      Fail(SrcBitfieldPiece + LineEnding +
+        'OpRange(0 .. ' + (Size div 2 - 1).ToString + ', ' + (Size div 2).ToString + ' .. ' + (Size - 1).ToString + ', %' + BinStr(opTruth, 4) + ') = ' + LineEnding +
+        ResbAndExpectedPiece + '.');
+  end;
+
+  for srcBase in PositionBases do
+    for srcFuzz in Fuzz do
+    begin
+      src := srcBase + srcFuzz;
+      if not ((src >= 0) and (src <= Size)) then continue;
+
+      for countBase in CountBases do
+        for countFuzz in Fuzz do
+        begin
+          count := countBase + countFuzz;
+          if not ((count >= 0) and (count <= Size - src)) then continue;
+
+          PrepareScratch;
+          resb.NotRange(src, count);
+          for i := 0 to count - 1 do
+            expect[src + i] := 1 - self.src[src + i];
+          if not ExpectMatchesResb then
+            Fail(SrcBitfieldPiece + LineEnding +
+              'NotRange(' + src.ToString + ', ' + count.ToString + ') = ' + LineEnding +
+              ResbAndExpectedPiece + '.');
+
+          PrepareScratch;
+          resb.SetRange(src, count);
+          FillChar(expect[src], count, 1);
+          if not ExpectMatchesResb then
+            Fail(SrcBitfieldPiece + LineEnding +
+              'SetRange(' + src.ToString + ', ' + count.ToString + ') = ' + LineEnding +
+              ResbAndExpectedPiece + '.');
+
+          PrepareScratch;
+          resb.ClearRange(src, count);
+          FillChar(expect[src], count, 0);
+          if not ExpectMatchesResb then
+            Fail(SrcBitfieldPiece + LineEnding +
+              'ClearRange(' + src.ToString + ', ' + count.ToString + ') = ' + LineEnding +
+              ResbAndExpectedPiece + '.');
+
+          pcExp := 0;
+          for i := 0 to count - 1 do
+            pcExp += self.src[src + i];
+          pcGot := srcb.PopCount(src, count);
+          if pcGot <> pcExp then
+            Fail(SrcBitfieldPiece + LineEnding +
+              'PopCount(' + src.ToString + ', ' + count.ToString + ') = ' + pcGot.ToString + ', expected ' + pcExp.ToString + '.');
+        end;
+
+      for dstBase in PositionBases do
+        for dstFuzz in Fuzz do
+        begin
+          dst := dstBase + dstFuzz;
+          if not ((dst >= 0) and (dst <= Size)) then continue;
+
+          for countBase in CountBases do
+            for countFuzz in Fuzz do
+            begin
+              count := countBase + countFuzz;
+              if not ((count >= 0) and (count <= Size - max(src, dst))) then continue;
+
+              PrepareScratch;
+              Move(pByte(expect)[src], pByte(expect)[dst], count * sizeof(byte));
+              resb.MoveRange(src, dst, count);
+              if not ExpectMatchesResb then
+                Fail(SrcBitfieldPiece + LineEnding +
+                  'MoveRange(' + src.ToString + ', ' + dst.ToString + ', ' + count.ToString + ') = ' + LineEnding +
+                  ResbAndExpectedPiece + '.');
+
+              PrepareScratch;
+              for i := 0 to count - 1 do
+                expect[dst + i] := expect[dst + i] and (1 - self.src[src + i]);
+              resb.AndNotRange(dst, resb, src, count);
+              if not ExpectMatchesResb then
+                Fail(SrcBitfieldPiece + LineEnding +
+                  'AndNotRange(' + src.ToString + ', ' + dst.ToString + ', ' + count.ToString + ') = ' + LineEnding +
+                  ResbAndExpectedPiece + '.');
+
+              pcExp := 0;
+              for i := 0 to count - 1 do
+                pcExp += self.src[src + i] and self.src[dst + i];
+              pcGot := srcb.IntersectionPopCount(src, srcb, dst, count);
+              if pcGot <> pcExp then
+                Fail(SrcBitfieldPiece + LineEnding +
+                  'IntersectionPopCount(' + src.ToString + ', ' + dst.ToString + ', ' + count.ToString + ') = ' + pcGot.ToString + ', expected ' + pcExp.ToString + '.');
+
+              PrepareScratch;
+              bin[0] := 123;
+              bin[(Size - 1) div bitsizeof(byte) + 1] := 124;
+              Move(pByte(expect)[src], pByte(expect)[dst], count * sizeof(byte));
+              resb.DumpBinary(src, count, @bin[1], length(bin) - 2);
+              if (bin[0] <> 123) or (bin[(Size - 1) div bitsizeof(byte) + 1] <> 124) then
+                Fail('DumpBinary(' + src.ToString + ', ' + count.ToString + ') corrupted memory.');
+              resb.LoadBinary(dst, count, @bin[1], length(bin) - 2);
+              if not ExpectMatchesResb then
+                Fail(SrcBitfieldPiece + LineEnding +
+                  'Dump/LoadBinary(' + src.ToString + ', ' + dst.ToString + ', ' + count.ToString + ') = ' + LineEnding +
+                  ResbAndExpectedPiece + '.');
+            end;
+        end;
+    end;
+end;
+
+procedure BitfieldRangeTest.PrepareScratch;
+begin
+  Move(src, expect, sizeof(src));
+  resb.CopyBits(srcb);
+end;
+
+function BitfieldRangeTest.ExpectMatchesResb: boolean;
+var
+  i: SizeInt;
+begin
+  for i := 0 to Size - 1 do
+    if expect[i] <> ord(resb[i]) then
+      exit(false);
+  result := true;
+end;
+
+function BitfieldRangeTest.SrcBitfieldPiece: string;
+begin
+  result :=
+    'Source bitfield:' + LineEnding +
+    BytesToString(src, Size);
+end;
+
+function BitfieldRangeTest.ResbAndExpectedPiece: string;
+begin
+  result :=
+    BitsToString(resb, Size) + LineEnding +
+    'expected ' + LineEnding +
+    BytesToString(expect, Size);
+end;
+
+class function BitfieldRangeTest.BytesToString(b: pByte; n: SizeUint): string;
+var
+  i: SizeInt;
+begin
+  result := '';
+  for i := 0 to SizeInt(n) - 1 do
+  begin
+    if (i > 0) and (SizeUint(i) mod bitsizeof(TBitsBase) = 0) then
+      result += LineEnding;
+    result += IntToStr(b[i]);
+  end;
+end;
+
+class function BitfieldRangeTest.BitsToString(b: TBits; n: SizeUint): string;
+var
+  i: SizeInt;
+begin
+  result := '';
+  for i := 0 to SizeInt(n) - 1 do
+  begin
+    if (i > 0) and (SizeUint(i) mod bitsizeof(TBitsBase) = 0) then
+      result += LineEnding;
+    result += Bool01[b[i]];
+  end;
+end;
+
+procedure TestRanges;
+var
+  iBitfieldSeed, i: SizeInt;
+  br: BitfieldRangeTest;
+begin
+  br.srcb := nil; br.resb := nil;
+  try
+    br.srcb := TBits.Create(br.Size);
+    br.resb := TBits.Create(br.Size);
+    for iBitfieldSeed := 1 to 10 do
+    begin
+      RandSeed := iBitfieldSeed;
+      for i := 0 to br.Size - 1 do
+      begin
+        br.src[i] := random(2);
+        br.srcb[i] := br.src[i] <> 0;
+      end;
+      br.PerformOnSrc;
+    end;
+  finally
+    br.srcb.Free; br.resb.Free;
+  end;
+end;
+
+procedure TestGetSetUint;
+type
+  NumRec = record
+    value, count, pos: cardinal;
+  end;
+var
+  iBitfieldSeed, i, iSwap, len: SizeInt;
+  b: TBits;
+  n: array of NumRec;
+  nSwap: NumRec;
+  msg: string;
+  got: cardinal;
+begin
+  for iBitfieldSeed := 1 to 10 do
+  begin
+    RandSeed := iBitfieldSeed;
+
+    // Fill 'n' with random numbers of different bit lengths.
+    SetLength((@n)^, 200);
+    len := 0;
+    for i := 0 to High(n) do
+    begin
+      n[i].count := 1 + i * bitsizeof(cardinal) div length(n);
+      n[i].value := random(High(cardinal) + 1);
+      if n[i].count < bitsizeof(n[i].value) then
+        n[i].value := n[i].value and (cardinal(1) shl n[i].count - 1);
+      n[i].pos := len;
+      len += SizeInt(n[i].count);
+    end;
+
+    // Shuffle 'n'.
+    for i := High(n) downto 1 do
+    begin
+      iSwap := random(i + 1);
+      nSwap := n[iSwap];
+      n[iSwap] := n[i];
+      n[i] := nSwap;
+    end;
+
+    b := TBits.Create;
+    try
+      for i := 0 to High(n) do
+        b.SetUint(n[i].pos, n[i].count, n[i].value);
+      for i := 0 to High(n) do
+      begin
+        got := b.GetUint(n[i].pos, n[i].count);
+        if got <> n[i].value then
+        begin
+          WriteStr(msg,
+            'Get/SetUint failed:', LineEnding,
+            Dump(b), LineEnding,
+            'pos = ', n[i].pos, ', count = ', n[i].count, ', expected = ', n[i].value, ', got = ', got);
+          Fail(msg);
+          break;
+        end;
+      end;
+    finally
+      b.Free;
+    end;
+  end;
+end;
+
 begin
   TestCopyBits;
+  TestDumpLoadText;
   TestBinOps;
   TestFinds;
   TestZeroUpper;
+  TestRanges;
+  TestGetSetUint;
   if somethingFailed then
     Halt(1);
   Writeln('Ok!');

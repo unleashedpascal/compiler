@@ -24,7 +24,7 @@ interface
 {$IFDEF FPC_DOTTEDUNITS}
 uses System.Contnrs, System.RtlConsts, System.SysUtils, System.Classes, System.Math;
 {$ELSE FPC_DOTTEDUNITS}
-uses Contnrs, RtlConsts, SysUtils, Classes, Math;
+uses Contnrs, RTLConsts, SysUtils, Classes, Math;
 {$ENDIF FPC_DOTTEDUNITS}
 
 
@@ -121,6 +121,7 @@ Type
     cu_dvmin,// dynamic-vmin
     cu_dvb,  // dynamic-vb
     cu_dvi,  // dynamic-vi
+    
     // container queries
     cu_cqw,  // relative to 1% of container's width
     cu_cqh,  // relative to 1% of container's height
@@ -133,8 +134,17 @@ Type
     cu_grad, // gradians, full circle is 400grad
     cu_rad,  // radians, full circle is (2*pi)rad
     cu_turn, // turns, full circle is 1turn
+    // time
+    cu_s,    // seconds
+    cu_ms,   // milliseconds
+    cu_Hz,   // Frequency, cycles per second
+    cu_kHz,  // Frequency, thousands of cycles per second
     // special
-    cu_fr    // fraction of flex space
+    cu_fr,   // fraction of flex space
+    cu_dpcm, // dots per cm.
+    cu_dpi,  // dots per inch
+    cu_dppx, // dots per pixel unit
+    cu_x     // same as cu_dppx
     );
   TCSSUnits = set of TCSSUnit;
 const
@@ -148,6 +158,8 @@ const
   cuAllLengths = cuAllAbsoluteLengths+cuAllViewportLengths+cuAllRelativeFontSize;
   cuAllLengthsAndPercent = cuAllLengths+[cuPercent];
   cuAllAngles = [cu_deg,cu_grad,cu_rad,cu_turn];
+  cuAllTimes = [cu_s,cu_ms];
+  cuAllFrequencies = [cu_Hz,cu_kHz];
 
   CSSUnitNames: array[TCSSUnit] of TCSSString = (
     '',     // no unit
@@ -212,8 +224,17 @@ const
     'grad', // gradians
     'rad',  // radians
     'turn', // turns
+    // time
+    's',    // seconds
+    'ms',   // milliseconds
+    'Hz',   // Frequency, cycles per second
+    'kHz',  // Frequency, thousands of cycles per second
     // special
-    'fr'    // fraction
+    'fr',   // fraction of flex space
+    'dpcm', // dots per cm.
+    'dpi',  // dots per inch
+    'dppx', // dots per pixel unit
+    'x'     // same as cu_dppx
     );
 
 type
@@ -433,6 +454,8 @@ type
   { TCSSURLElement - a quoted string literal }
 
   TCSSURLElement = Class(TCSSBaseStringElement)
+  Protected
+    function GetAsString(aFormat : Boolean; const aIndent : TCSSString): TCSSString; override;
   public
     Class function CSSType : TCSSType; override;
   end;
@@ -917,6 +940,32 @@ end;
 
 { TCSSURLElement }
 
+function TCSSURLElement.GetAsString(aFormat: Boolean;
+  const aIndent: TCSSString): TCSSString;
+
+var
+  I : Integer;
+  Quoted : Boolean;
+
+begin
+  // Value is the address alone, so the url() around it is written back
+  // here. An address holding what cannot stand unquoted inside one is
+  // written as a string, the way TCSSStringElement writes its own.
+  Quoted:=False;
+  for I:=1 to Length(Value) do
+    if Value[I] in [' ','"','''','(',')',#9,#10,#12,#13] then
+      begin
+      Quoted:=True;
+      Break;
+      end;
+  if Quoted then
+    Result:='url('+StringToCSSString(Value)+')'
+  else
+    Result:='url('+Value+')';
+  if aFormat then
+    Result:=aIndent+Result;
+end;
+
 class function TCSSURLElement.CSSType: TCSSType;
 begin
   Result:=csstURL;
@@ -1340,7 +1389,8 @@ begin
       end;
     Result:=Result+Selectors[I].GetAsString(aFormat,aIndent);
     end;
-  if (ChildCount=0) and (aPrefix<>'') then
+  if (ChildCount=0) and (NestedRuleCount=0) and (aPrefix<>'') then
+    // an at-rule without a block, e.g. '@import url("me.css");'
     Result:=aIndent+aPrefix+Result+';'
   else
     begin

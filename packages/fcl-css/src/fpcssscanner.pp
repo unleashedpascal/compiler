@@ -144,6 +144,32 @@ Type
   TCSSScannerWarnEvent = function(Sender: TObject; Msg: TCSSString; aRow, aCol: integer
     ): boolean of object; // returns true to continue, false to raise an exception
 
+  // A line as delivered by the line reader, together with its stream offset.
+  TCSSScannerLine = record
+    Line: TCSSString;
+    LineStart: Integer; // 0-based stream offset of the start of Line
+  end;
+  TCSSScannerLines = array of TCSSScannerLine;
+
+  // Result of TCSSScanner.SearchStatementEndInCurLine
+  TCSSStatementEnd = (
+    cseUnknown, // the rest of the current line does not tell
+    cseLBrace,  // found a '{', i.e. the statement is a rule
+    cseEnd      // found a ';' or '}', i.e. the statement is a declaration
+    );
+
+  // Complete scanner position, see TCSSScanner.SaveState.
+  TCSSScannerState = record
+    Line: TCSSString;
+    TokenOfs: Integer; // offset of TokenStr within Line, -1 if TokenStr=nil
+    Row, LineStart: Integer;
+    Token: TCSSToken;
+    TokenString: TCSSString;
+    TokenRow, TokenCol, TokenPos: Integer;
+    PrevToken: TCSSToken;
+    Options: TCSSScannerOptions;
+  end;
+
   TCSSScanner = class
   private
     FPreviousToken: TCSSToken;
@@ -162,6 +188,12 @@ Type
     TokenStr: PCSSChar;
     FSourceStream : TStream;
     FOwnSourceFile : Boolean;
+    // The line reader cannot seek. To allow RestoreState to rewind across line
+    // boundaries the lines read since SaveState are recorded and served again.
+    FRecordLines: Boolean;
+    FRecordedLines: TCSSScannerLines; // lines fetched since SaveState
+    FPendingLines: TCSSScannerLines;  // lines to serve before reading the source
+    FPendingLinePos: Integer;
     function DoHash: TCSSToken;
     function DoIdentifierLike : TCSSToken;
     function DoInvalidChars : TCSSToken;
@@ -191,6 +223,12 @@ Type
     procedure OpenFile(const AFilename: TCSSString);
     Function FetchToken: TCSSToken;
     function IsUTF8BOM: boolean;
+    function SearchStatementEndInCurLine: TCSSStatementEnd;
+    // Speculative scanning: SaveState remembers the current position and starts
+    // recording lines, RestoreState rewinds to it, DropState commits.
+    function SaveState: TCSSScannerState;
+    procedure RestoreState(const aState: TCSSScannerState);
+    procedure DropState;
     Property ReturnComments : Boolean Index csoReturnComments Read GetOption Write SetOption;
     Property ReturnWhiteSpace : Boolean Index csoReturnWhiteSpace Read GetOption Write SetOption;
     Property Options : TCSSScannerOptions Read FOptions Write FOptions;
@@ -210,6 +248,10 @@ Type
   end;
 
 function SafeFormat(const Fmt: TCSSString; const Args: array of const): TCSSString;
+// The text of the bytes of a stylesheet, which are read as UTF-8.
+function CSSStringOfBytes(const aBytes: RawByteString): TCSSString;
+// The bytes of the text of a stylesheet, written as UTF-8.
+function CSSBytesOfString(const aText: TCSSString): RawByteString;
 
 implementation
 
@@ -298,6 +340,28 @@ begin
     {$endif}
 end;
 
+function CSSStringOfBytes(const aBytes: RawByteString): TCSSString;
+
+begin
+{$IF SIZEOF(CHAR)=1}
+  Result:=aBytes;
+{$ELSE}
+  Result:=UTF8Decode(aBytes);
+{$ENDIF}
+end;
+
+
+function CSSBytesOfString(const aText: TCSSString): RawByteString;
+
+begin
+{$IF SIZEOF(CHAR)=1}
+  Result:=aText;
+{$ELSE}
+  Result:=UTF8Encode(aText);
+{$ENDIF}
+end;
+
+
 function SafeFormat(const Fmt: TCSSString;
   const Args: array of const): TCSSString;
 var
@@ -380,21 +444,211 @@ begin
 end;
 
 function TCSSScanner.FetchLine: Boolean;
+var
+  l: Integer;
 begin
-  if FSourceFile.IsEOF then
+  if FPendingLinePos<Length(FPendingLines) then
+    begin
+    // a line read during a speculative scan, served again after RestoreState
+    FCurLineStart := FPendingLines[FPendingLinePos].LineStart;
+    FCurLine := FPendingLines[FPendingLinePos].Line;
+    Inc(FPendingLinePos);
+    if FPendingLinePos=Length(FPendingLines) then
+      begin
+      FPendingLines := nil;
+      FPendingLinePos := 0;
+      end;
+    end
+  else if FSourceFile.IsEOF then
   begin
     FCurLine := '';
     TokenStr := nil;
     Result := false;
+    exit;
   end else
   begin
     // Capture the stream offset before reading, so it points at the line start.
     FCurLineStart := FSourceFile.Position;
     FCurLine := FSourceFile.ReadLine;
-    TokenStr := PCSSChar(CurLine);
-    Result := true;
-    Inc(FCurRow);
   end;
+  if FRecordLines then
+    begin
+    l := Length(FRecordedLines);
+    SetLength(FRecordedLines,l+1);
+    FRecordedLines[l].Line := FCurLine;
+    FRecordedLines[l].LineStart := FCurLineStart;
+    end;
+  TokenStr := PCSSChar(CurLine);
+  Result := true;
+  Inc(FCurRow);
+end;
+
+function TCSSScanner.SearchStatementEndInCurLine: TCSSStatementEnd;
+// Read the rest of the current line, without fetching any token, and search for
+// the end of the statement which starts with the current token:
+// a '{' means the statement is a rule, a ';' or '}' means it is a declaration.
+// '{' within round or edged brackets are skipped.
+// The result is cseUnknown if the line ends first, or if a comment or a string
+// might continue on the next line.
+var
+  p: PCSSChar;
+  Depth: Integer;
+  Delim: TCSSChar;
+  First: Boolean;
+begin
+  Result:=cseUnknown;
+  p:=TokenStr;
+  if p=nil then exit;
+  Depth:=0;
+  First:=true;
+  repeat
+    case p[0] of
+    #0:
+      exit; // end of line
+    ' ',#9:
+      ; // whitespace, the statement continues
+    '''','"':
+      begin
+      // a string, note that it cannot span lines
+      Delim:=p[0];
+      Inc(p);
+      while p[0]<>Delim do
+        begin
+        if p[0]=#0 then exit; // unterminated, let the scanner complain
+        if p[0]='\' then
+          begin
+          Inc(p);
+          if p[0]=#0 then exit;
+          end;
+        Inc(p);
+        end;
+      First:=false;
+      end;
+    '/':
+      case p[1] of
+      '/':
+        exit; // a comment till the end of the line
+      '*':
+        begin
+        // a comment, which can span lines
+        Inc(p,2);
+        while not ((p[0]='*') and (p[1]='/')) do
+          begin
+          if p[0]=#0 then exit; // it continues on the next line
+          Inc(p);
+          end;
+        Inc(p); // the '/' is skipped below
+        end
+      else
+        First:=false;
+      end;
+    '\':
+      begin
+      // an escaped character
+      Inc(p);
+      if p[0]=#0 then exit;
+      First:=false;
+      end;
+    ':':
+      begin
+      if First and ((csoDisablePseudo in FOptions)
+          or not ((p[1]=':') or (p[1] in AlNumIden))) then
+        // a plain ':' right behind the first token, e.g. 'color: red',
+        // in other words: not a pseudo class or element like 'div:hover'
+        exit(cseEnd);
+      First:=false;
+      end;
+    '(','[':
+      begin
+      Inc(Depth);
+      First:=false;
+      end;
+    ')',']':
+      begin
+      if Depth=0 then exit(cseEnd);
+      Dec(Depth);
+      First:=false;
+      end;
+    '{':
+      begin
+      if Depth=0 then exit(cseLBrace);
+      First:=false;
+      end;
+    ';','}':
+      begin
+      if Depth=0 then exit(cseEnd);
+      First:=false;
+      end;
+    else
+      First:=false;
+    end;
+    Inc(p);
+  until false;
+end;
+
+function TCSSScanner.SaveState: TCSSScannerState;
+begin
+  Result.Line := FCurLine;
+  if TokenStr=nil then
+    Result.TokenOfs := -1
+  else if Length(FCurLine)=0 then
+    Result.TokenOfs := 0 // see GetCurColumn: PCSSChar of an empty string
+  else
+    Result.TokenOfs := TokenStr - PCSSChar(FCurLine);
+  Result.Row := FCurRow;
+  Result.LineStart := FCurLineStart;
+  Result.Token := FCurToken;
+  Result.TokenString := FCurTokenString;
+  Result.TokenRow := FCurTokenRow;
+  Result.TokenCol := FCurTokenColumn;
+  Result.TokenPos := FCurTokenPos;
+  Result.PrevToken := FPreviousToken;
+  Result.Options := FOptions;
+  FRecordedLines := nil;
+  FRecordLines := true;
+end;
+
+procedure TCSSScanner.RestoreState(const aState: TCSSScannerState);
+var
+  i, Cnt: Integer;
+  NewPending: TCSSScannerLines;
+begin
+  FRecordLines := false;
+  // The lines fetched since SaveState must be served again, followed by the
+  // lines which were still pending at that time.
+  NewPending := nil;
+  Cnt := Length(FPendingLines)-FPendingLinePos;
+  SetLength(NewPending,Length(FRecordedLines)+Cnt);
+  for i := 0 to Length(FRecordedLines)-1 do
+    NewPending[i] := FRecordedLines[i];
+  for i := 0 to Cnt-1 do
+    NewPending[Length(FRecordedLines)+i] := FPendingLines[FPendingLinePos+i];
+  FPendingLines := NewPending;
+  FPendingLinePos := 0;
+  FRecordedLines := nil;
+
+  FCurLine := aState.Line;
+  if aState.TokenOfs<0 then
+    TokenStr := nil
+  else if Length(FCurLine)=0 then
+    TokenStr := PCSSChar(FCurLine)
+  else
+    TokenStr := PCSSChar(FCurLine)+aState.TokenOfs;
+  FCurRow := aState.Row;
+  FCurLineStart := aState.LineStart;
+  FCurToken := aState.Token;
+  FCurTokenString := aState.TokenString;
+  FCurTokenRow := aState.TokenRow;
+  FCurTokenColumn := aState.TokenCol;
+  FCurTokenPos := aState.TokenPos;
+  FPreviousToken := aState.PrevToken;
+  FOptions := aState.Options;
+end;
+
+procedure TCSSScanner.DropState;
+begin
+  FRecordLines := false;
+  FRecordedLines := nil;
 end;
 
 function TCSSScanner.DoWhiteSpace : TCSSToken;
@@ -426,7 +680,7 @@ begin
   Len:=TokenStr-TokenStart;
   SetLength(FCurTokenString, Len);
   if (Len>0) then
-    Move(TokenStart^,FCurTokenString[1],Len);
+    Move(TokenStart^,FCurTokenString[1],Len*SizeOf(TCSSChar));
   Result := ctkComment;
 end;
 
@@ -450,7 +704,7 @@ begin
       Len:=TokenStr-TokenStart+1;
       SetLength(FCurTokenString,OLen+Len);
       if Len>1 then
-        Move(TokenStart^,FCurTokenString[OLen+1],Len-1);
+        Move(TokenStart^,FCurTokenString[OLen+1],(Len-1)*SizeOf(TCSSChar));
       Inc(OLen,Len);
       FCurTokenString[OLen]:=#10;
       if not FetchLine then
@@ -471,7 +725,7 @@ begin
   Len:=TokenStr-TokenStart-1; // -1 for *
   SetLength(FCurTokenString, Olen+Len);
   if (Len>0) then
-    Move(TokenStart^, FCurTokenString[Olen + 1], Len);
+    Move(TokenStart^, FCurTokenString[Olen + 1], Len*SizeOf(TCSSChar));
   Inc(TokenStr);
   Result := ctkComment;
 end;
@@ -564,12 +818,12 @@ begin
       SetLength(FCurTokenString, OLen + Len+1+Length(S));
       if Len > 0 then
         begin
-        Move(TokenStart^, FCurTokenString[OLen + 1], Len);
+        Move(TokenStart^, FCurTokenString[OLen + 1], Len*SizeOf(TCSSChar));
         Inc(OLen, Len);
         end;
       if S>'' then
         begin
-        Move(S[1],FCurTokenString[OLen + 1],Length(S));
+        Move(S[1],FCurTokenString[OLen + 1],Length(S)*SizeOf(TCSSChar));
         Inc(OLen, Length(S));
         end;
       TokenStart := TokenStr+1;
@@ -589,7 +843,7 @@ begin
   Len := TokenStr - TokenStart;
   SetLength(FCurTokenString, OLen + Len);
   if Len > 0 then
-    Move(TokenStart^, FCurTokenString[OLen+1], Len);
+    Move(TokenStart^, FCurTokenString[OLen+1], Len*SizeOf(TCSSChar));
   Inc(TokenStr);
   Result := ctkSTRING;
 end;
@@ -606,7 +860,7 @@ begin
   Len:=TokenStr-TokenStart;
   Setlength(FCurTokenString, Len);
   if (Len>0) then
-    Move(TokenStart^,FCurTokenString[1],Len);
+    Move(TokenStart^,FCurTokenString[1],Len*SizeOf(TCSSChar));
   Result:=ctkString;
   FCurTokenString:=TCSSChar(StrToInt(FCurTokenString));
 end;
@@ -686,7 +940,7 @@ begin
   Len:=TokenStr-TokenStart;
   Setlength(FCurTokenString, Len);
   if (Len>0) then
-    Move(TokenStart^,FCurTokenString[1],Len);
+    Move(TokenStart^,FCurTokenString[1],Len*SizeOf(TCSSChar));
 end;
 
 function TCSSScanner.DoHash :TCSSToken;
@@ -704,7 +958,7 @@ begin
   Len:=TokenStr-TokenStart;
   Setlength(FCurTokenString, Len);
   if (Len>0) then
-  Move(TokenStart^,FCurTokenString[1],Len);
+  Move(TokenStart^,FCurTokenString[1],Len*SizeOf(TCSSChar));
 end;
 
 
@@ -731,7 +985,7 @@ begin
     oldLen:=Length(FCurTokenString);
     Setlength(FCurTokenString, OldLen+Len);
     if (Len>0) then
-      Move(TokenStart^,FCurTokenString[OldLen+1],Len);
+      Move(TokenStart^,FCurTokenString[OldLen+1],Len*SizeOf(TCSSChar));
     if TokenStr[0]=#0 then
       if not FetchLine then
         Exit(ctkEOF);
@@ -758,7 +1012,7 @@ begin
   Len:=(TokenStr-TokenStart);
   SetLength(FCurTokenString,Len);
   if Len > 0 then
-    Move(TokenStart^,FCurTokenString[1],Len);
+    Move(TokenStart^,FCurTokenString[1],Len*SizeOf(TCSSChar));
 
 end;
 
@@ -814,7 +1068,7 @@ begin
     oLen:=Length(FCurTokenString);
     SetLength(FCurTokenString,Olen+Len);
     if Len > 0 then
-      Move(TokenStart^,FCurTokenString[Olen+1],Len);
+      Move(TokenStart^,FCurTokenString[Olen+1],Len*SizeOf(TCSSChar));
     if IsEscape then
       Inc(TokenStr);
     TokenStart := TokenStr;
@@ -828,7 +1082,8 @@ begin
     Result:=ctkIMPORTANT
   else if CurTokenString='!' then
     begin
-    if (TokenStr^=' ') and CompareMem(TokenStr+1,PChar('important'),9)
+    if (TokenStr^=' ')
+    and CompareMem(TokenStr+1,PCSSChar('important'),9*SizeOf(TCSSChar))
     and (TokenStr[10] in [' ',';']) then
       begin
       inc(TokenStr,10);
@@ -847,6 +1102,10 @@ begin
       end
     else
       begin
+      // The token of a url is the address alone, which is what the
+      // quoted form above leaves behind. What stands in FCurTokenString
+      // here is the "url(" that opened it.
+      FCurTokenString:='';
       Result:=EatBadURL;
       end;
     If (result<>ctkEOF) and (TokenStr[0] in [')']) then
@@ -877,7 +1136,7 @@ begin
   Len:=TokenStr-TokenStart;
   SetLength(FCurTokenString,Len);
   if Len > 0 then
-    Move(TokenStart^,FCurTokenString[1],Len);
+    Move(TokenStart^,FCurTokenString[1],Len*SizeOf(TCSSChar));
 end;
 
 function TCSSScanner.FetchToken: TCSSToken;
@@ -901,10 +1160,15 @@ end;
 
 function TCSSScanner.IsUTF8BOM: boolean;
 begin
+{$IF SIZEOF(CHAR)=1}
   Result:=(length(FCurTokenString)=3)
       and (FCurTokenString[1]=#$EF)
       and (FCurTokenString[2]=#$BB)
       and (FCurTokenString[3]=#$BF);
+{$ELSE}
+  // The reader gives the three bytes as one character.
+  Result:=(length(FCurTokenString)=1) and (FCurTokenString[1]=#$FEFF);
+{$ENDIF}
 end;
 
 function TCSSScanner.DoFetchToken: TCSSToken;
@@ -1143,9 +1407,11 @@ function TCSSStreamLineReader.ReadLine: TCSSString;
 Var
   FPos,OLen,Len: Integer;
   PRun : PByte;
+  // The bytes of the line, before they are read as UTF-8.
+  Bytes : RawByteString;
 
 begin
-  Result:='';
+  Bytes:='';
   FPos:=FBufPos;
   Repeat
     PRun:=@Buffer[FBufPos];
@@ -1159,9 +1425,9 @@ begin
       Len:=FBufPos-FPos;
       If (Len>0) then
         begin
-        Olen:=Length(Result);
-        SetLength(Result,OLen+Len);
-        Move(Buffer[FPos],Result[OLen+1],Len);
+        Olen:=Length(Bytes);
+        SetLength(Bytes,OLen+Len);
+        Move(Buffer[FPos],Bytes[OLen+1],Len);
         end;
       FillBuffer;
       FPos:=FBufPos;
@@ -1170,10 +1436,11 @@ begin
   Len:=FBufPos-FPos;
   If (Len>0) then
     begin
-    Olen:=Length(Result);
-    SetLength(Result,OLen+Len);
-    Move(Buffer[FPos],Result[OLen+1],Len)
+    Olen:=Length(Bytes);
+    SetLength(Bytes,OLen+Len);
+    Move(Buffer[FPos],Bytes[OLen+1],Len)
     end;
+  Result:=CSSStringOfBytes(Bytes);
   If (PRun^ in [10,13]) and (FBufPos<FBufLen) then
     begin
     Inc(FBufPos);

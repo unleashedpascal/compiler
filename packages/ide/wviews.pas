@@ -251,10 +251,21 @@ type
       procedure HandleEvent(var Event: TEvent); virtual;
     end;
 
+    PWFileList = ^TWFileList;
+    TWFileList = object(TFileList)
+      procedure NewList(AList: PCollection); virtual;
+    end;
+
+    PWFileCollection = ^TWFileCollection;
+    TWFileCollection = object(TFileCollection)
+      function Compare(Key1, Key2: Pointer): Sw_Integer; virtual;
+    end;
+
     PFPFileDialog = ^TFPFileDialog;
     TFPFileDialog = object(TFileDialog)
       constructor Init(AWildCard: TWildStr; const ATitle,
         InputName: String; AOptions: Word; HistoryId: Byte);
+      procedure SetData(var Rec); virtual;
       procedure ChangeBounds (Var Bounds: TRect); virtual;
       procedure SizeLimits (Var Min, Max: TPoint); virtual;
     end;
@@ -319,6 +330,7 @@ uses Mouse,
 {$ifdef WinClipSupported}
      FvClip,
 {$endif WinClipSupported}
+     Dos,
      FpConst,
      FVConsts,
      App,MsgBox,
@@ -2836,12 +2848,55 @@ begin
   //Message(Owner,evBroadCast,cmInputLineLen,pointer(Length(st)));
 end;
 
+procedure TWFileList.NewList(AList: PCollection);
+var BList : PWFileCollection;
+
+procedure ReAdd(P : PSearchRec);
+begin
+  BList^.Insert(P);
+end;
+
+begin
+  { transfer list elements from PFileCollection to PWFileCollection
+    with sort order files first and directories follow afterwards }
+  BList := New(PWFileCollection, Init(5, 5));
+  AList^.ForEach(TCallbackProcParam(@ReAdd)); 
+  AList^.DeleteAll;
+  Dispose(AList,Done);
+  inherited NewList (BList);
+end;
+
+function TWFileCollection.Compare(Key1, Key2: Pointer): Sw_Integer;
+begin
+  if PSearchRec(Key1)^.Name = PSearchRec(Key2)^.Name then Compare := 0
+  else if PSearchRec(Key1)^.Name = '..' then Compare := 1
+  else if PSearchRec(Key2)^.Name = '..' then Compare := -1
+  else if (PSearchRec(Key1)^.Attr and Directory <> 0) and
+     (PSearchRec(Key2)^.Attr and Directory = 0) then Compare := 1
+  else if (PSearchRec(Key2)^.Attr and Directory <> 0) and
+     (PSearchRec(Key1)^.Attr and Directory = 0) then Compare := -1
+  else if UpcaseStr(PSearchRec(Key1)^.Name) > UpcaseStr(PSearchRec(Key2)^.Name) then
+    Compare := 1
+{$ifdef unix}
+  else if UpcaseStr(PSearchRec(Key1)^.Name) < UpcaseStr(PSearchRec(Key2)^.Name) then
+    Compare := -1
+  else if PSearchRec(Key1)^.Name > PSearchRec(Key2)^.Name then
+    Compare := 1
+{$endif def unix}
+  else
+    Compare := -1;
+end;
+
 constructor TFPFileDialog.Init(AWildCard: TWildStr; const ATitle,
         InputName: String; AOptions: Word; HistoryId: Byte);
 var R: TRect;
   DInput  : PFPFileInputLine;
   Control : PView;
+  LabelFileName : PLabel;
+  LabelFileList : PLabel;
+  ScrollBar : PScrollBar;
   History : PHistory;
+  WFileList: PWFileList;
   S : String;
 begin
   inherited init(AWildCard,ATitle,InputName,AOptions,HistoryId);
@@ -2850,19 +2905,97 @@ begin
   FileName^.GetBounds(R);
   DInput := New(PFPFileInputLine, Init(R, 79{FileNameLen+4}));
   DInput^.SetData(S);
-  DInput^.GrowMode:=FileName^.GrowMode;
-  InsertBefore(DInput,FileName); {insert before to preserve order as it was}
-  Delete(FileName);
-  Dispose(FileName,done);
-  FileName:=DInput;
-  FileHistory^.Link:=DInput;
+  DInput^.GrowMode:=gfGrowHiX;
+
+  LabelFileName:=nil;
+  Control:=FileName^.Prev; { Label }
+  if TypeOf(Control^) = TypeOf(TLabel) then
+  begin
+    LabelFileName:=PLabel(Control);
+    if LabelFileName^.Link = PView(FileName) then
+    else LabelFileName:=nil;
+  end;
+
+  ScrollBar:=nil;
+  Control:=FileList^.Next; {  }
+  if TypeOf(Control^) = TypeOf(TScrollBar) then
+  begin
+    ScrollBar:=PScrollBar(Control);
+  end;
+
+  LabelFileList:=nil ;
+  Control:=FileList^.Prev; { Label }
+  if TypeOf(Control^) = TypeOf(TLabel) then
+  begin
+    LabelFileList:=PLabel(Control);
+    if LabelFileList^.Link=PView(FileList) then
+    else LabelFileList:=nil;
+  end;
+
+  if (LabelFileList<>nil) and (LabelFileName<>nil) and (ScrollBar<>nil) then
+  begin
+    LabelFileName^.GrowMode:=0;
+    LabelFileName^.Link:=DInput;
+    FileHistory^.GrowMode:=gfGrowLoX or gfGrowHiX;
+    InsertBefore(DInput,FileName); {insert before to preserve order as it was}
+    Delete(FileName);
+    Dispose(FileName,done);
+    FileName:=DInput;
+    FileHistory^.Link:=DInput;
+
+    Delete(FileName);
+    Delete(LabelFileName);
+    Delete(FileList);
+    Delete(LabelFileList);
+    Delete(FileHistory);
+    Delete(ScrollBar);
+
+    { Reassign layout that corresponds to original Turbo Vision file dialog layout }
+    R.Assign(3,3,31,4);
+    FileName^.SetBounds(R);
+    R.Assign(2,2,3+LabelFileName^.Size.X,3);
+    LabelFileName^.SetBounds(R);
+    R.Assign(31,3,34,4);
+    FileHistory^.SetBounds(R);
+    R.Assign(3,14,34,15);
+    ScrollBar^.SetBounds(R);
+    R.Assign(3,6,34,14);
+    //FileList^.SetBounds(R);
+    WFileList := New(PWFileList, Init(R, ScrollBar));
+    WFileList^.GrowMode:=gfGrowHiX or gfGrowHiY;
+    WFileList^.NewList(FileList^.List);
+    FileList^.List:=nil;
+    Dispose(FileList,Done);
+    FileList:=WFileList;
+    R.Assign(2,5,3+LabelFileList^.Size.X,6);
+    LabelFileList^.SetBounds(R);
+    LabelFileList^.Link:=FileList;
+
+    InsertBefore(LabelFileList,Last);
+    InsertBefore(FileList,Last);
+    InsertBefore(ScrollBar,Last);
+    InsertBefore(FileHistory,Last);
+    InsertBefore(LabelFileName,Last);
+    InsertBefore(FileName,Last);
+  end else
+    Dispose(DInput,done);
   {resize}
   if Desktop^.Size.Y > 26 then
     GrowTo(Size.X,Desktop^.Size.Y-6);
   if Desktop^.Size.X > 70 then
     GrowTo(Min(Desktop^.Size.X-(70-Size.X),102),Size.Y);
   {set focus on the new input line}
-  DInput^.Focus;
+  FileName^.Focus;
+end;
+
+procedure TFPFileDialog.SetData(var Rec);
+begin
+  TDialog.SetData(Rec);
+  if (String(Rec) <> '') and (IsWild(TWildStr(String(Rec)))) then
+  begin
+    Valid(cmFileInit);
+    FileName^.Select;
+  end;
 end;
 
 procedure TFPFileDialog.ChangeBounds (Var Bounds: TRect);

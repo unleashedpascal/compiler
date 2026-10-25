@@ -27,4 +27,5 @@ begin
     Halt(3);
   if Convert($00030000) <> 0 then
     Halt(4);
+  writeln('ok');
 end.

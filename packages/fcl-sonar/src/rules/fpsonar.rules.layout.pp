@@ -14,9 +14,6 @@
  **********************************************************************}
 unit FpSonar.Rules.Layout;
 
-{ LEX-tier layout rules:
-  line length, trailing whitespace, tabs, long-numeric-literal underscores, digit grouping.
-}
 
 {$mode objfpc}{$H+}
 
@@ -372,7 +369,7 @@ var
   begin
     Result := False;
     for k := 0 to High(aContext.Tokens) do
-      if IsStringToken(aContext.Tokens[k])
+      if aContext.Tokens[k].IsString
         and (aContext.Tokens[k].Row = aRow) then
       begin
         lSpanStart := aContext.Tokens[k].Col;
@@ -418,7 +415,7 @@ var
   i, lDisplay, lMax: integer;
   lLine: string;
 begin
-  lMax := RuleParamInt(aContext.Config, FMetadata.RuleId, 'maxLength',
+  lMax := aContext.Config.RuleParamInt(FMetadata.RuleId, 'maxLength',
     cMaxLength);
   for i := 0 to High(aContext.Lines) do
   begin
@@ -443,7 +440,7 @@ var
   lLine, lLexeme: string;
 begin
   for i := 0 to High(aContext.Tokens) do
-    if IsNumberToken(aContext.Tokens[i]) then
+    if aContext.Tokens[i].IsNumber then
     begin
       lRow := aContext.Tokens[i].Row;
       lCol := aContext.Tokens[i].Col;
@@ -478,7 +475,7 @@ var
   lLine, lLexeme: string;
 begin
   for i := 0 to High(aContext.Tokens) do
-    if IsNumberToken(aContext.Tokens[i]) then
+    if aContext.Tokens[i].IsNumber then
     begin
       lRow := aContext.Tokens[i].Row;
       lCol := aContext.Tokens[i].Col;
@@ -509,17 +506,21 @@ begin
   Result := TRuleMetadata.Make('LineTooLong', rtLex, rfLineText, sevMinor, itCodeSmell,
     cfHigh, True, cKeyLineLong);
   Result.AddParam('maxLength', rpkInt, cMaxLength);
+  Result.Description :=
+    'Flags a line longer than the configured maximum length.';
 end;
 
 
 initialization
   RegisterRule(TRuleNoTrailingWhitespace.Create(TRuleMetadata.Make(
     'NoTrailingWhitespace', rtLex, rfLineText, sevMinor, itCodeSmell, cfHigh,
-    True, cKeyTrailing)));
+    True, cKeyTrailing).WithDescription(
+    'Flags trailing whitespace at the end of a line.')));
   RegisterMessage(cKeyTrailing, SNoTrailingWhitespace);
 
   RegisterRule(TRuleNoTabs.Create(TRuleMetadata.Make(
-    'NoTabs', rtLex, rfLineText, sevMinor, itCodeSmell, cfHigh, True, cKeyTabs)));
+    'NoTabs', rtLex, rfLineText, sevMinor, itCodeSmell, cfHigh, True, cKeyTabs).WithDescription(
+    'Flags tab characters; use spaces.')));
   RegisterMessage(cKeyTabs, SNoTabs);
 
   RegisterRule(TRuleLineTooLong.Create(LineTooLongMeta));
@@ -527,12 +528,14 @@ initialization
 
   RegisterRule(TRuleLongNumericLiteralUnderscores.Create(TRuleMetadata.Make(
     'LongNumericLiteralUnderscores', rtLex, rfTokenStream, sevInfo, itCodeSmell,
-    cfHigh, True, cKeyNumUnderscores)));
+    cfHigh, True, cKeyNumUnderscores).WithDescription(
+    'Flags a long numeric literal that should use _ digit separators.')));
   RegisterMessage(cKeyNumUnderscores, SLongNumericLiteralUnderscores);
 
   RegisterRule(TRuleDigitGroupingStandard.Create(TRuleMetadata.Make(
     'DigitGroupingStandard', rtLex, rfTokenStream, sevInfo, itCodeSmell, cfHigh,
-    True, cKeyGrouping)));
+    True, cKeyGrouping).WithDescription(
+    'Flags irregular digit grouping in a numeric literal.')));
   RegisterMessage(cKeyGrouping, SDigitGroupingStandard);
 
 end.

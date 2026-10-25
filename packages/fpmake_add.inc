@@ -87,6 +87,7 @@
   add_libgbafpc(ADirectory+IncludeTrailingPathDelimiter('libgbafpc'));
   add_libgc(ADirectory+IncludeTrailingPathDelimiter('libgc'));
   add_libgd(ADirectory+IncludeTrailingPathDelimiter('libgd'));
+  add_libheif(ADirectory+IncludeTrailingPathDelimiter('libheif'));
   add_libjack(ADirectory+IncludeTrailingPathDelimiter('libjack'));
   add_libmagic(ADirectory+IncludeTrailingPathDelimiter('libmagic'));
   add_libmicrohttpd(ADirectory+IncludeTrailingPathDelimiter('libmicrohttpd'));
@@ -175,3 +176,4 @@
   add_zlib(ADirectory+IncludeTrailingPathDelimiter('zlib'));
   add_zorba(ADirectory+IncludeTrailingPathDelimiter('zorba'));
   add_fcl_sonar(ADirectory+IncludeTrailingPathDelimiter('fcl-sonar'));
+  add_fcl_svg(ADirectory+IncludeTrailingPathDelimiter('fcl-svg'));

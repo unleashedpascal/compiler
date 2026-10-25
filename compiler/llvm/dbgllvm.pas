@@ -173,7 +173,7 @@ interface
 implementation
 
     uses
-      sysutils,cutils,cfileutl,constexp,
+      cdynset,sysutils,cutils,cfileutl,constexp,
       version,globals,verbose,systems,
       cpubase,cpuinfo,paramgr,
       fmodule,
@@ -1703,12 +1703,6 @@ implementation
            not assigned(def.procstarttai) then
           exit;
 
-        { These don't contain a taillvmdecl, they are completely generated
-          in native assembly. If we want to add debug information to these,
-          we have to do it using the regular debug info generation }
-        if po_assembler in def.procoptions then
-          exit;
-
         if df_generic in def.defoptions then
           exit;
 
@@ -2433,8 +2427,7 @@ implementation
                   inc(i);
                 end;
             end;
-          constguid,
-          constset:
+          constguid:
             begin
               AddConstToAbbrev(ord(DW_FORM_block1));
               current_asmdata.asmlists[al_dwarf_info].concat(tai_const.create_8bit(usedef.size));
@@ -2443,6 +2436,21 @@ implementation
               while (i<size) do
                 begin
                   current_asmdata.asmlists[al_dwarf_info].concat(tai_const.create_8bit((pbyte(sym.value.valueptr+i)^)));
+                  inc(i);
+                end;
+            end;
+          constset:
+            begin
+              AddConstToAbbrev(ord(DW_FORM_block1));
+              current_asmdata.asmlists[al_dwarf_info].concat(tai_const.create_8bit(usedef.size));
+              i:=0;
+              size:=sym.constdef.size;
+              while (i<size) do
+                begin
+                  if i<length(tdynset(sym.value.valueptr)) then
+                    current_asmdata.asmlists[al_dwarf_info].concat(tai_const.create_8bit(tdynset(sym.value.valueptr)[i]))
+                  else
+                    current_asmdata.asmlists[al_dwarf_info].concat(tai_const.create_8bit(0));
                   inc(i);
                 end;
             end;

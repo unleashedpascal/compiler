@@ -1484,10 +1484,12 @@ const pemagic : array[0..3] of byte = (
                   begin
                     addend:=((address shr 29) and $3) or (((address shr 5) and $7ffff) shl 2);
                     { sign extend the value if necessary }
-                    if (addend and (1 shl 21)) <> 0 then
+                    if (addend and (1 shl 20)) <> 0 then
                       addend:=addend or sarint64(1 shl 63,12);
-                    relocval:=relocval and $1fffff;
-                    relocval:=int64(relocval-objsec.mempos-objreloc.dataoffset+addend);
+                    { the addend is a byte offset, so it has to be applied to the
+                      symbol address before taking the page number: ADRP encodes
+                      page(S+A)-page(P), not page(S)-page(P)+A }
+                    relocval:=int64(((relocval+addend) shr 12)-((objsec.mempos+objreloc.dataoffset) shr 12));
                     address:=address and ($3 shl 29) and ($7ffff shl 5);
                     address:=address or ((relocval and $3) shl 29) or (((relocval shr 2) and $7ffff) shl 5);
                   end;
@@ -1495,10 +1497,12 @@ const pemagic : array[0..3] of byte = (
                   begin
                     addend:=((address shr 29) and $3) or (((address shr 5) and $7ffff) shl 2);
                     { sign extend the value if necessary }
-                    if (addend and (1 shl 21)) <> 0 then
+                    if (addend and (1 shl 20)) <> 0 then
                       addend:=addend or sarint64(1 shl 63, 12);
-                    relocval:=relocval shr 12;
-                    relocval:=int64((relocval-(objsec.mempos+objreloc.dataoffset) shr 12)+addend);
+                    { the addend is a byte offset, so it has to be applied to the
+                      symbol address before taking the page number: ADRP encodes
+                      page(S+A)-page(P), not page(S)-page(P)+A }
+                    relocval:=int64(((relocval+addend) shr 12)-((objsec.mempos+objreloc.dataoffset) shr 12));
                     address:=address and not (($3 shl 29) or ($7ffff shl 5));
                     address:=address or ((relocval and $3) shl 29) or (((relocval shr 2) and $7ffff) shl 5);
                   end;

@@ -2055,7 +2055,7 @@ parser_w_staticlib_export_not_c_callable=03460_W_Exported routine "$1" is not ca
 #
 # 03460 is the last used parser one
 #
-# 04143 is the last used one
+# 04144 is the last used one
 #
 % \section{Type checking errors}
 % This section lists all errors that can occur when type checking is
@@ -2517,7 +2517,10 @@ type_e_cannot_determine_size_of_wasm_reference_type=04133_E_WebAssembly referenc
 % WebAssembly reference types are opaque, meaning neither their size, nor their bit pattern can be observed.
 type_e_ordinal_or_pointer_expr_expected=04134_E_Ordinal or pointer expression expected
 % The expression must be of an ordinal or pointer type.
-type_e_tuples_not_comparable=04135_E_Tuples have different shapes and cannot be compared
+type_e_interface_has_no_name=04135_E_Interface type $1 has no valid name
+% When applying the as-operator to an interface or class, the desired interface (i.e. the right operand of the
+% as-operator) must have a valid name.
+type_e_tuples_not_comparable=04144_E_Tuples have different shapes and cannot be compared
 % The two tuple operands have different field counts or field types,
 % so ordering comparison is not possible.
 type_e_tuple_index_must_be_const=04136_E_Tuple index must be a compile-time constant
@@ -2558,7 +2561,7 @@ type_e_assign_open_array_param=04143_E_Cannot assign to an open array parameter,
 #
 # Symtable
 #
-# 05104 is the last used one
+# 05106 is the last used one
 #
 % \section{Symbol handling}
 % This section lists all the messages that concern the handling of symbols.
@@ -2885,12 +2888,16 @@ sym_f_systemunitnotloaded=05100_F_System unit not loaded
 sym_e_wasm_ref_types_cannot_be_used_in_records=05101_E_WebAssembly reference types cannot be used inside records, objects, or classes
 % WebAssembly reference types don't have an in-memory representation and therefore
 % cannot be used inside records, objects or classes.
-sym_e_label_index_expected=05102_E_Label "$1" is an indexed label, an index is required: "$1[...]"
+sym_e_type_must_be_record=05102_E_Record type expected
+% The variable or expression isn't of the type \var{record}.
+sym_w_overload_not_possible=05103_W_Identifier "$1" cannot be overloaded for type "$2"
+% The identifier is already defined for this type, but cannot be overloaded
+sym_e_label_index_expected=05105_E_Label "$1" is an indexed label, an index is required: "$1[...]"
 % The label was declared with an index list, e.g. \var{label foo[1..10]} or
 % \var{label foo['a','b']}, so every use must name one element of it, both when
 % defining the target (\var{foo[3]:}) and when jumping to it
 % (\var{goto foo[3]}). The bare name only denotes the whole declaration.
-sym_e_label_index_outside_dispatch=05103_E_Index $2 of label "$1" is outside the range of an earlier "goto $1[...]" with a variable index; declare the full range in the label declaration
+sym_e_label_index_outside_dispatch=05106_E_Index $2 of label "$1" is outside the range of an earlier "goto $1[...]" with a variable index; declare the full range in the label declaration
 % A \var{goto} with a variable index compiles to a dispatch built from the
 % index range known at that point. This label index lies outside that range,
 % so the already generated dispatch could never reach it. Declare the whole

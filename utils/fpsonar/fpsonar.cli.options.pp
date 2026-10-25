@@ -17,6 +17,7 @@ unit FpSonar.CLI.Options;
 { argv -> AnalysisConfig translation for the analyze/baseline commands }
 
 {$mode objfpc}{$H+}
+{$modeswitch advancedrecords}
 
 interface
 
@@ -51,7 +52,7 @@ type
     OutputFormat: TFpSonarOutputFormat;
     // --output/-o ('' = stdout)
     OutputFile: string;
-    // --config/-c (default DefaultConfig)
+    // --config/-c (default TFpSonarConfig.Default)
     RuleConfig: TFpSonarConfig;
     // --new-code <file> given (default False)
     NewCodeMode: Boolean;
@@ -67,10 +68,11 @@ type
     SyntheticOnly: Boolean;
     // --ppu-cache <dir>: persistent ppudump-stub cache directory ('' = per-run temp only)
     PpuCacheDir: string;
+    // --namespace-map <file>: table replacing the baked-in one ('' = baked-in)
+    NamespaceMapFile: string;
+    // Parses argv (excluding argv[0]) into a TFpSonarCliOptions.
+    class function Parse(const aArgs: array of string): TFpSonarCliOptions; static;
   end;
-
-// Parses argv (excluding argv[0]) into a TFpSonarCliOptions.
-function ParseOptions(const aArgs: array of string): TFpSonarCliOptions;
 
 implementation
 
@@ -126,7 +128,7 @@ begin
 end;
 
 
-function ParseOptions(const aArgs: array of string): TFpSonarCliOptions;
+class function TFpSonarCliOptions.Parse(const aArgs: array of string): TFpSonarCliOptions;
 
 var
   lCli: TFpSonarAnalysisConfig;      // CLI-only overrides (managed fields auto-empty)
@@ -136,7 +138,7 @@ var
   lPmConfig: TFpSonarAnalysisConfig;
   lDiag: TFpSonarDiagnostic;
   i, j: Integer;
-  lArg, lAbs, lExt, lFmt, lCfgPath, lCfgErr: string;
+  lArg, lAbs, lExt, lFmt, lCfgPath, lCfgErr, lDialect: string;
 
   // Records a usage error (first one wins).
   procedure FlagError(const aWhat: string);
@@ -169,7 +171,7 @@ var
 begin
   Result:=Default(TFpSonarCliOptions);
   Result.OutputFormat := ofText;
-  Result.RuleConfig := DefaultConfig;
+  Result.RuleConfig := TFpSonarConfig.Default;
 
   // --- 1. Parse argv into command / overrides / positionals. ---
   i := 0;
@@ -219,17 +221,41 @@ begin
             begin
             lCfgPath := ConsumeValue('--config');
             if (lCfgPath <> '') and
-              not LoadConfigFromFile(lCfgPath, Result.RuleConfig, lCfgErr) then
+              not Result.RuleConfig.LoadFromFile(lCfgPath, lCfgErr) then
               FlagError(Format(SCannotLoadConfig, [lCfgPath, lCfgErr]));
             end
           else if lArg = '--real-rtl' then
             Result.RealRtlPreferred := True
           else if lArg = '--synthetic-only' then
             Result.SyntheticOnly := True
+          else if lArg = '--pas2js' then
+            lCli.Dialect := dlPas2js
+          else if lArg = '--dialect' then
+            begin
+            lDialect := ConsumeValue('--dialect');
+            if lDialect = 'pas2js' then
+              lCli.Dialect := dlPas2js
+            else if lDialect = 'default' then
+              lCli.Dialect := dlDefault
+            else if lDialect <> '' then
+              FlagError(Format(SUnknownDialect, [lDialect]));
+            end
+          else if lArg = '--pas2js-src' then
+            AddStr(lCli.UnitSearchPaths, ConsumeValue('--pas2js-src'))
           else if lArg = '--ppu-cache' then
             Result.PpuCacheDir := ConsumeValue('--ppu-cache')
-          else if Copy(lArg, 1, 12) = '--ppu-cache=' then
+          else if Copy(lArg, 12) = '--ppu-cache=' then
             Result.PpuCacheDir := Copy(lArg, 13, Length(lArg) - 12)
+          else if (lArg = '--namespace-map')
+            or (Copy(lArg, 1, 16) = '--namespace-map=') then
+            begin
+            if lArg = '--namespace-map' then
+              Result.NamespaceMapFile := ConsumeValue('--namespace-map')
+            else
+              Result.NamespaceMapFile := Copy(lArg, 17, Length(lArg) - 16);
+            if Result.NamespaceMapFile = '' then
+              FlagError(Format(SMissingValue, ['--namespace-map']));
+            end
           else if lArg = '-d' then
             AddStr(lCli.Defines, ConsumeValue('-d'))
           else if lArg = '-M' then

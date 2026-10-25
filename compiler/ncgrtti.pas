@@ -693,8 +693,47 @@ implementation
       end;
 
 
+    { Returns true if this is a path to a fieldvar which is either directly part of the record
+      or is only accessible through this specific symref (all steps on the way are hidden) and
+      only if the field itself is an accessible non static, non objc class/protocol field }
+    function symref_to_field_hidden_path(sym:tsym):boolean; inline;
+      begin
+        while (sym.typ=symrefsym) and
+              (tsymrefsym(sym).fieldvs.visibility=vis_hidden) and
+              (tsymrefsym(sym).fieldvs.vardef.typ=recorddef)do
+          sym:=tsymrefsym(sym).ref;
+        result:=is_normal_fieldvarsym(sym) and
+                (sym.visibility<>vis_hidden) and
+                not is_objc_class_or_protocol(tfieldvarsym(sym).vardef);
+      end;
+
+
+    function reftarget(sym:tsym):tfieldvarsym; inline;
+      begin
+        while sym.typ=symrefsym do
+          sym:=tsymrefsym(sym).ref;
+        if (sym.typ<>fieldvarsym) then
+          internalerror(2024100402);
+        result:=tfieldvarsym(sym);
+      end;
+
+
     { writes a 32-bit count followed by array of field infos for given symtable }
     procedure TRTTIWriter.fields_write_rtti_data(tcb: ttai_typedconstbuilder; def: tabstractrecorddef; rt: trttitype);
+
+      function symoffset(sym:tsym):asizeint; inline;
+        begin
+          result:=0;
+          while sym.typ=symrefsym do
+            begin
+              result:=result+tsymrefsym(sym).fieldvs.fieldoffset;
+              sym:=tsymrefsym(sym).ref;
+            end;
+          if (sym.typ<>fieldvarsym) or is_objc_class_or_protocol(tfieldvarsym(sym).vardef) then
+            internalerror(2024100401);
+          result:=result+tfieldvarsym(sym).fieldoffset;
+        end;
+
       type
         pfield_entry = ^tfield_entry;
         tfield_entry = record
@@ -767,17 +806,20 @@ implementation
         for i:=0 to st.SymList.Count-1 do
           begin
             sym:=tsym(st.SymList[i]);
-            if is_normal_fieldvarsym(sym) and
-               (
-                (rt=fullrtti) or
-                tfieldvarsym(sym).vardef.needs_inittable
-               ) and
-               not is_objc_class_or_protocol(tfieldvarsym(sym).vardef) and
-               not compose_carrier(sym) then
+            if (
+                 is_normal_fieldvarsym(sym) and
+                 (
+                  ((rt=fullrtti) and (sym.visibility<>vis_hidden)) or
+                  ((rt=initrtti) and tfieldvarsym(sym).vardef.needs_inittable)
+                 ) and
+                 not is_objc_class_or_protocol(tfieldvarsym(sym).vardef) and
+                 not compose_carrier(sym)
+               ) or ((rt=fullrtti) and symref_to_field_hidden_path(sym))
+                then
               begin
                 new(fe);
-                fe^.sym := tfieldvarsym(sym);
-                fe^.offset := tfieldvarsym(sym).fieldoffset;
+                fe^.sym := reftarget(sym);
+                fe^.offset := symoffset(sym);
                 fields.add(fe);
               end;
           end;
@@ -822,7 +864,11 @@ implementation
                 (rt=fullrtti) or
                 tfieldvarsym(sym).vardef.needs_inittable
                ) then
-              write_rtti(tfieldvarsym(sym).vardef,rt);
+              write_rtti(tfieldvarsym(sym).vardef,rt)
+            else if (rt=fullrtti) and
+               (sym.typ=symrefsym) and
+               symref_to_field_hidden_path(sym) then
+              write_rtti(reftarget(sym).vardef,rt);
           end;
       end;
 

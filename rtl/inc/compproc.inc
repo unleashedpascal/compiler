@@ -229,6 +229,10 @@ procedure fpc_chararray_Currency(c : Currency;len,fr : SizeInt;out a : array of 
 { Val() support }
 {$ifndef FPUNONE}
 Function fpc_Val_Real_ShortStr(const s : shortstring; out code : ValSInt): ValReal; compilerproc;
+{$ifndef CPU16}
+Function fpc_Val_Single_ShortStr(const s : shortstring; out code : ValSInt): Single; compilerproc;
+Function fpc_Val_Double_ShortStr(const s : shortstring; out code : ValSInt): Double; compilerproc;
+{$endif CPU16}
 {$endif}
 Function fpc_Val_SInt_ShortStr(DestSize: SizeInt; Const S: ShortString; out Code: ValSInt): ValSInt; compilerproc;
 Function fpc_Val_UInt_Shortstr({$ifndef VER3_2}DestSize: SizeInt;{$endif VER3_2} Const S: ShortString; out Code: ValSInt): ValUInt; compilerproc;
@@ -237,6 +241,10 @@ Function fpc_Val_Currency_ShortStr(const s : shortstring; out Code : ValSInt): c
 {$ifdef FPC_HAS_FEATURE_ANSISTRINGS}
 {$ifndef FPUNONE}
 Function fpc_Val_Real_AnsiStr(Const S : RawByteString; out Code : ValSInt): ValReal; compilerproc;
+{$ifndef CPU16}
+Function fpc_Val_Single_AnsiStr(Const S : RawByteString; out Code : ValSInt): Single; compilerproc;
+Function fpc_Val_Double_AnsiStr(Const S : RawByteString; out Code : ValSInt): Double; compilerproc;
+{$endif CPU16}
 {$endif}
 Function fpc_Val_UInt_AnsiStr ({$ifndef VER3_2}DestSize: SizeInt;{$endif VER3_2} Const S : RawByteString; out Code : ValSInt): ValUInt; compilerproc;
 Function fpc_Val_SInt_AnsiStr (DestSize: SizeInt; Const S : RawByteString; out Code : ValSInt): ValSInt; compilerproc;
@@ -248,6 +256,10 @@ function fpc_Val_enum_ansistr(str2ordindex:pointer;const s:RawByteString;out cod
   {$ifndef FPC_WIDESTRING_EQUAL_UNICODESTRING}
   {$ifndef FPUNONE}
   Function fpc_Val_Real_WideStr(Const S : WideString; out Code : ValSInt): ValReal; compilerproc;
+  {$ifndef CPU16}
+  Function fpc_Val_Single_WideStr(Const S : WideString; out Code : ValSInt): Single; compilerproc;
+  Function fpc_Val_Double_WideStr(Const S : WideString; out Code : ValSInt): Double; compilerproc;
+  {$endif CPU16}
   {$endif}
   Function fpc_Val_SInt_WideStr (DestSize: SizeInt; Const S : WideString; out Code : ValSInt): ValSInt; compilerproc;
   Function fpc_Val_UInt_WideStr ({$ifndef VER3_2}DestSize: SizeInt;{$endif VER3_2} Const S : WideString; out Code : ValSInt): ValUInt; compilerproc;
@@ -256,6 +268,10 @@ function fpc_Val_enum_ansistr(str2ordindex:pointer;const s:RawByteString;out cod
   {$endif ndef FPC_WIDESTRING_EQUAL_UNICODESTRING}
   {$ifndef FPUNONE}
   Function fpc_Val_Real_UnicodeStr(Const S : UnicodeString; out Code : ValSInt): ValReal; compilerproc;
+  {$ifndef CPU16}
+  Function fpc_Val_Single_UnicodeStr(Const S : UnicodeString; out Code : ValSInt): Single; compilerproc;
+  Function fpc_Val_Double_UnicodeStr(Const S : UnicodeString; out Code : ValSInt): Double; compilerproc;
+  {$endif CPU16}
   {$endif}
   Function fpc_Val_SInt_UnicodeStr (DestSize: SizeInt; Const S : UnicodeString; out Code : ValSInt): ValSInt; compilerproc;
   Function fpc_Val_UInt_UnicodeStr ({$ifndef VER3_2}DestSize: SizeInt;{$endif VER3_2} Const S : UnicodeString; out Code : ValSInt): ValUInt; compilerproc;
@@ -461,7 +477,7 @@ procedure fpc_PWideChar_To_ShortStr(out res : shortstring;const p : pwidechar); 
 {$endif FPC_HAS_FEATURE_WIDESTRINGS}
 
 
-{ $ifdef FPC_HAS_FEATURE_TEXTIO}
+{$ifdef FPC_HAS_FEATURE_TEXTIO}
 { from text.inc }
 Function fpc_get_input:PText;compilerproc;
 Function fpc_get_output:PText;compilerproc;
@@ -546,7 +562,7 @@ procedure fpc_SetupReadStr_Unicodestr(var ReadWriteStrText: text; const s: unico
 {$ifndef FPC_WIDESTRING_EQUAL_UNICODESTRING}
 procedure fpc_SetupReadStr_Widestr(var ReadWriteStrText: text; const s: widestring); compilerproc;
 {$endif FPC_WIDESTRING_EQUAL_UNICODESTRING}
-{ $endif FPC_HAS_FEATURE_TEXTIO}
+{$endif FPC_HAS_FEATURE_TEXTIO}
 
 {$ifdef FPC_HAS_FEATURE_VARIANTS}
 procedure fpc_variant_init(var v: tvardata);compilerproc;
@@ -625,7 +641,9 @@ Procedure fpc_Read_Text_LongWord(var f : text; out q : longword); compilerproc;
 Procedure fpc_Read_Text_LongInt(var f : text; out i : longint); compilerproc;
 {$endif CPU16 or CPU8}
 function fpc_GetBuf_Text(var f : Text) : PAnsiChar; compilerproc;
+{$ifdef FPC_HAS_FEATURE_FILEIO}
 function fpc_GetBuf_TypedFile(var f : TypedFile) : pointer; compilerproc;
+{$endif FPC_HAS_FEATURE_FILEIO}
 {$endif FPC_HAS_FEATURE_TEXTIO}
 
 {$ifdef FPC_INCLUDE_SOFTWARE_MOD_DIV}
@@ -704,6 +722,8 @@ function fpc_qword_to_uint128(v : qword) : UInt128; compilerproc;
 
 function fpc_div_currency(n,z : currency) : currency; compilerproc;
 function fpc_mod_currency(n,z : currency) : currency; compilerproc;
+function fpc_mul_currency(x,y : currency) : currency; compilerproc;
+function fpc_mul_currency_checkoverflow(x,y : currency) : currency; compilerproc;
 
 {$ifdef FPC_INCLUDE_SOFTWARE_SHIFT_INT64}
 function fpc_shl_qword(value : qword; shift : ALUUInt) : qword; compilerproc;

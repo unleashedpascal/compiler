@@ -377,8 +377,8 @@ const
       begin
         Write(xmloutput,'      <ostarget shortname="',targetinfos[target]^.shortname,'" name="',targetinfos[target]^.name,'"');
         if tf_under_development in targetinfos[target]^.flags then
-          Write(' experimental="1"');
-        WriteLn('/>');
+          Write(xmloutput,' experimental="1"');
+        WriteLn(xmloutput,'/>');
       end;
     WriteLn(xmloutput,'    </ostargets>');
   end;
@@ -3728,6 +3728,7 @@ begin
           'e' :
             begin
               SetErrorFlags(copy(more,j+1));
+              init_settings.verbosity:=status.verbosity;
               break;
             end;
           'f' :
@@ -3940,7 +3941,9 @@ procedure TOption.Interpret_V_l(opt, more: TCmdStr);
 
 begin
   if not setverbosity(More) then
-    IllegalPara(opt);
+    IllegalPara(opt)
+  else
+    init_settings.verbosity:=status.verbosity;
 end;
 
 
@@ -5979,7 +5982,7 @@ begin
         if not option.FPUSetExplicitly then
           begin
             include(init_settings.moduleswitches,cs_fp_emulation);
-            init_settings.fputype:=fpu_soft;
+            init_settings.fputype:=fpu_none;
           end;
       end;
     else

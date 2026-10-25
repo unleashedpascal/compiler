@@ -207,6 +207,14 @@ resourcestring
 
 var
   uFontCacheList: TFPFontCacheList;
+{$if (defined(linux) or defined(solaris) or (defined(bsd) and not(defined(darwin)) and not defined(HasFontsConf)))}
+  {$define UsesFontsConf}
+{$endif}
+
+{$ifdef UsesFontsConf}
+  // True when fontconfig was loaded by this unit, so that we unload only if we loaded.
+  uFontConfigLoaded: Boolean = False;
+{$endif}
 
 function gTTFontCache: TFPFontCacheList;
 begin
@@ -624,18 +632,18 @@ end;
 
 procedure TFPFontCacheList.ReadStandardFonts;
 
+{$ifdef UsesFontsConf}
   {$ifdef freebsd}
-    {$define HasFontsConf}
     const
       cFontsConf = '/usr/local/etc/fonts/fonts.conf';
-  {$endif}
-  { Use same default for Linux and other BSD non-Darwin systems. }
-  {$if (defined(linux) or defined(solaris) or (defined(bsd) and not(defined(darwin)) and not defined(HasFontsConf)))}
     {$define HasFontsConf}
+  {$else}
+  { Use same default for Linux and other BSD non-Darwin systems. }
     const
       cFontsConf = '/etc/fonts/fonts.conf';
-  {$ifend}
-
+    {$define HasFontsConf}
+  {$endif not freebsd}
+{$endif UsesFontsConf}
 
 
 {$ifdef HasFontsConf}
@@ -648,8 +656,11 @@ var
 {$endif}
 begin
   {$ifdef HasFontsConf} // Linux & BSD
-  if not FontConfigLibLoaded then
-    loadfontconfiglib('');
+  if not uFontConfigLoaded then
+    begin
+    LoadFontConfigLib('', False);
+    uFontConfigLoaded := FontConfigLibLoaded;
+    end;
 
   config := FcInitLoadConfigAndFonts();
 
@@ -658,8 +669,13 @@ begin
   else if assigned(FcConfigFilename) then
     FN:=FcConfigFilename(Nil)
   else
-    FN:=cFontsConf;
-  ReadXMLFile(doc, FN);
+    FN:=Nil;
+  if Assigned(FN) then begin
+    ReadXMLFile(doc, FN);
+    FcStrFree(FN);
+  end else
+    ReadXMLFile(doc, cFontsConf);
+  FcConfigDestroy(config);
   try
     lChild := doc.DocumentElement.FirstChild;
     while Assigned(lChild) do
@@ -892,8 +908,11 @@ begin
   Result:=false;
   res:='';
 
-  if not FontConfigLibLoaded then
-    loadfontconfiglib('');
+  if not uFontConfigLoaded then
+    begin
+    LoadFontConfigLib('', False);
+    uFontConfigLoaded := FontConfigLibLoaded;
+    end;
 
   config := FcInitLoadConfigAndFonts();
 
@@ -1205,6 +1224,17 @@ initialization
 
 finalization
   uFontCacheList.Free;
+{$if (defined(LINUX) or defined(BSD)) and not defined(DARWIN)}
+  // The library is unloaded: another part of the program may still be using fontconfig.
+  if uFontConfigLoaded then
+    begin
+    // Release fontconfig's own caches, built by FcInitLoadConfigAndFonts.
+    if Assigned(FcFini) then
+      FcFini;
+    UnLoadFontConfigLib;
+    end;
+{$ifend}
+
 end.
 
 

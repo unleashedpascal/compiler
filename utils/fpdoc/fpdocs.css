@@ -221,3 +221,40 @@ span.identifier {
     cursor: default; 
 }
 
+
+/* Breadcrumb: the path from the package to the current page */
+
+/* The second selector overrules the margin that bulma puts below a breadcrumb */
+nav.breadcrumb,
+nav.breadcrumb:not(:last-child) {
+    margin: 0;
+}
+
+nav.breadcrumb ul,
+nav.breadcrumb ul:not(:last-child) {
+    display: flex;
+    flex-wrap: wrap;
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+/* Bulma puts 0.75em at both sides of every step, that is too much here */
+nav.breadcrumb a,
+nav.breadcrumb li.is-active span {
+    padding: 0 0.15em;
+}
+
+nav.breadcrumb li:first-child a {
+    padding-left: 0;
+}
+
+nav.breadcrumb li + li::before {
+    content: '/';
+    padding: 0 0.15em;
+    color: gray;
+}
+
+nav.breadcrumb li.is-active span {
+    font-weight: bold;
+}

@@ -819,6 +819,8 @@ type
     procedure RollBackRetaining(trans : TSQLHandle); override;
     procedure UpdateIndexDefs(IndexDefs : TIndexDefs; TableName : string); override;
     function GetSchemaInfoSQL(SchemaType : TSchemaType; SchemaObjectName, SchemaPattern : string) : string; override;
+    function RefreshLastInsertID(Query: TCustomSQLQuery; Field: TField
+					): Boolean; override;
     Property Proxy : TSQLConnection Read FProxy;
   Published
     Property ConnectorType : String Read FConnectorType Write SetConnectorType;
@@ -1984,8 +1986,11 @@ begin
   else case Param.DataType of
     ftGuid,
     ftMemo,
+    ftWideMemo,
     ftFixedChar,
-    ftString   : Result := QuotedStr(GetAsString(Param));
+    ftFixedWideChar,
+    ftString,
+    ftWideString : Result := QuotedStr(GetAsString(Param));
     ftDate     : Result := '''' + FormatDateTime('yyyy-mm-dd', Param.AsDateTime, FSQLFormatSettings) + '''';
     ftTime     : Result := '''' + TimeIntervalToString(Param.AsDateTime) + '''';
     ftDateTime : Result := '''' + FormatDateTime('yyyy-mm-dd hh:nn:ss.zzz', Param.AsDateTime, FSQLFormatSettings) + '''';
@@ -4130,6 +4135,13 @@ function TSQLConnector.GetSchemaInfoSQL(SchemaType: TSchemaType;
 begin
   CheckProxy;
   Result:=FProxy.GetSchemaInfoSQL(SchemaType, SchemaObjectName, SchemaPattern);
+end;
+
+function TSQLConnector.RefreshLastInsertID(Query: TCustomSQLQuery; Field: TField
+			): Boolean;
+begin
+	CheckProxy;
+  Result := FProxy.RefreshLastInsertID(Query, Field);
 end;
 
 
