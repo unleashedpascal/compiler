@@ -168,7 +168,15 @@ begin
   with Info do
    begin
      { Specify correct max-page-size and common-page-size to prevent big gaps between sections in resulting executable }
-     s:='ld -z max-page-size=0x1000 -z common-page-size=0x1000 -z noexecstack -z now -z relro --build-id $OPT -L. -T $RES -o $EXE';
+     { The response file adds to the default linker script, it does not replace it:
+       given with -T and without a SECTIONS block, ld.bfd lays everything into one
+       segment that is writable and executable, which Android refuses to load }
+{$ifdef aarch64}
+     { Android 15 maps a library into 16 KB pages only when its segments are aligned to them }
+     s:='ld -z max-page-size=0x4000 -z common-page-size=0x4000 -z noexecstack -z now -z relro --build-id $OPT -L. $RES -o $EXE';
+{$else aarch64}
+     s:='ld -z max-page-size=0x1000 -z common-page-size=0x1000 -z noexecstack -z now -z relro --build-id $OPT -L. $RES -o $EXE';
+{$endif aarch64}
      ExeCmd[1]:=s + ' --entry=_start';
      DllCmd[1]:=s + ' -shared -soname $SONAME';
      DllCmd[2]:='strip --strip-unneeded $EXE';
@@ -344,17 +352,9 @@ begin
       AddFileName(maybequoted(s1));
       Add(')');
 
-      { Additions to the linker script }
-
-      add('SECTIONS');
-      add('{');
-      add('  .data           :');
-      add('  {');
-      { extra by FPC }
-      add('    KEEP (*(.fpc .fpc.n_version .fpc.n_links))');
-      add('  }');
-      add('}');
-      add('INSERT AFTER .data1');
+      { No SECTIONS block here: lld, the linker of the NDK since r23, cannot
+        insert into its built-in layout and fails on the INSERT command, and
+        it places the .fpc sections on its own }
 
       // Define different aliases for normal and JNI libraries
       if FJNIOnLoadName <> '' then
