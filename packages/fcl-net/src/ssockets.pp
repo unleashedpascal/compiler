@@ -337,6 +337,10 @@ type
 
   TNonBlockingSocketStream = class(TSocketStream)
   {$IFDEF HAVENONBLOCKING}
+  protected
+    // the error a connect that did not block ended with, 0 when there was none
+    FConnectError: Integer;
+  public
   function SetSocketBlockingMode(ASocket: cint; ABlockMode: TBlockingMode; AFDSPtr: Pointer): boolean; virtual;
   function CheckSocketConnectTimeout(ASocket: cint; AFDSPtr: Pointer; ATimeVPtr: Pointer): TCheckTimeoutResult; virtual;
   {$ENDIF}
@@ -1463,7 +1467,7 @@ begin
   S.Protocol:=spStream;
   S.FD:=CreateRawSocket(S.SocketType,spStream,0,False);
   If SocketInvalid(S.FD) Then
-    Raise ESocketError.Create(seCreationFailed,[Format('%d',[APort])]);
+    Raise ESocketError.Create(seCreationFailed,[Format('%s (port %d)',[SysErrorMessage(SocketError),APort])]);
   Inherited Create(S,AHandler);
 end;
 
@@ -1560,7 +1564,7 @@ begin
   s.SocketType:=stUnixSocket;
   S.FD:={$IFDEF FPC_DOTTEDUNITS}System.Net.{$ENDIF}Sockets.fpSocket(AF_UNIX,SOCK_STREAM,0);
   If SocketInvalid(S.FD) then
-    Raise ESocketError.Create(seCreationFailed,[AFileName])
+    Raise ESocketError.Create(seCreationFailed,[Format('%s (%s)',[SysErrorMessage(SocketError),AFileName])])
   else
     Inherited Create(S,AHandler);
 end;
@@ -1663,7 +1667,7 @@ begin
   S.Protocol:=spStream;
   S.FD:=CreateRawSocket(S.SocketType,spStream,0,False);
   If SocketInvalid(S.FD) Then
-    Raise ESocketError.Create(seCreationFailed,[Format('%d',[APort])]);
+    Raise ESocketError.Create(seCreationFailed,[Format('%s (port %d)',[SysErrorMessage(SocketError),APort])]);
   Inherited Create(S,AHandler);
   if (AHandler=Nil) then // Backwards compatible behaviour.
     Connect;
@@ -1724,6 +1728,7 @@ begin
   locFDS := PFDSet(AFDSPtr);
   locTimeVal^.tv_usec := (FConnectTimeout mod 1000) * 1000;
   locTimeVal^.tv_sec := FConnectTimeout div 1000;
+  FConnectError:=0;
   Res:=-1;
   {$ifdef unix}
     Res:=fpSelect(ASocket + 1, nil, locFDS, nil, locTimeVal); // 0 -> TimeOut
@@ -1734,7 +1739,10 @@ begin
   if (Res=0) then
     Result:=ctrTimeout
   else if (Res<0) then
-    Result:=ctrError
+    begin
+    Result:=ctrError;
+    FConnectError:=SocketError;
+    end
   else if (Res>0) then
     begin
     Result:=ctrError;
@@ -1749,6 +1757,8 @@ begin
       fpGetSockOpt(ASocket, SOL_SOCKET, SO_ERROR, @Err, @ErrLen);
       if Err=0 then // 0 -> connected
         Result:=ctrOK
+      else
+        FConnectError:=Err;
       end;
     end;
 end;
@@ -1832,6 +1842,8 @@ begin
 {$ENDIF}
   If (Not IsError) and Assigned(Handler) then
     begin
+    // the socket is connected; what fails now is the handler, which names its own error
+    Err:=0;
     IsError:=Not FHandler.Connect;
     if IsError then
       CloseSocket(FSocket);
@@ -1844,7 +1856,16 @@ begin
       if Assigned(FHandler) then
         aErrMsg:=FHandler.GetLastErrorDescription
       else
-        aErrMsg:='Error connecting';
+        aErrMsg:='';
+      if (aErrMsg='') and (Err<>0) then
+        begin
+        {$IFDEF HAVENONBLOCKING}
+        // the select of a connect with a timeout holds the error, the connect itself only says it is under way
+        if (ConnectTimeOut>0) and (FConnectError<>0) then
+          Err:=FConnectError;
+        {$ENDIF}
+        aErrMsg:=SysErrorMessage(Err);
+        end;
       Raise ESocketError.Create(seConnectFailed, [Format('%s:%d',[FEndPoint.First.Address, Port]),aErrMsg]);
       end;
 end;
