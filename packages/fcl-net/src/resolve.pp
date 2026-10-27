@@ -13,6 +13,11 @@ Unit resolve;
 {$define usenetdb}
 {$endif Unix}
 {$endif}
+{$ifdef android}
+// the C library of Android asks the resolver of the system, which uses the DNS
+// servers of the active network; netdb can only fall back to fixed public ones there
+{$undef usenetdb}
+{$endif android}
 { --------------------------------------------------------------------
   Unit for internet domain calls.
   Copyright (C) 2003  Michael Van Canneyt

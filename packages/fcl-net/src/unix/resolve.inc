@@ -14,7 +14,7 @@
 
  **********************************************************************}
 uses
-  initc;
+  initc, ctypes;
 
 const
   { Net type }
@@ -82,7 +82,7 @@ function getnetbyname ( Name : PAnsiChar) : PNetEntry; cdecl; external socklib;
 function getservbyname (name : PAnsiChar  ; protocol : PAnsiChar) : PServEntry; cdecl; external socklib;
 function getservbyport (port : longint; protocol : PAnsiChar) : PServEntry; cdecl; external socklib;
 
-function  GetDNSError : libcint;
+function  GetDNSError : cint;
 
 begin
   GetDNSError:=fpgetCerrno;
