@@ -188,6 +188,7 @@ interface
         procedure appendsym_var_with_name_type_offset(list:TAsmList; sym:tabstractnormalvarsym; const name: string; def: tdef; offset: pint; const flags: tdwarfvarsymflags);
         { used for fields and properties mapped to fields }
         procedure appendsym_fieldvar_with_name_offset(list:TAsmList;sym: tfieldvarsym;const name: string; def: tdef; offset: pint);
+        procedure appendsym_compose_carrier(list:TAsmList;sym: tfieldvarsym;offset: pint);
         procedure appendsym_const_member(list:TAsmList;sym:tconstsym;ismember:boolean);
 
         procedure beforeappendsym(list:TAsmList;sym:tsym);override;
@@ -2982,7 +2983,33 @@ implementation
 
     procedure TDebugInfoDwarf.appendsym_fieldvar(list:TAsmList;sym: tfieldvarsym);
       begin
-        appendsym_fieldvar_with_name_offset(list,sym,symname(sym, false),sym.vardef,0);
+        if pos('$compose$',sym.realname)=1 then
+          appendsym_compose_carrier(list,sym,0)
+        else
+          appendsym_fieldvar_with_name_offset(list,sym,symname(sym, false),sym.vardef,0);
+      end;
+
+
+    { the members of an `embed` / inline anonymous record / `union` live in a
+      `$compose$N` carrier field. emit them as members of the outer record at
+      the carrier's offset, so the debugger shows `x` rather than `$compose$N.x`,
+      matching the flattened names the source uses }
+    procedure TDebugInfoDwarf.appendsym_compose_carrier(list:TAsmList;sym: tfieldvarsym;offset: pint);
+      var
+        i : longint;
+        subsym : tsym;
+      begin
+        inc(offset,sym.fieldoffset);
+        for i:=0 to tabstractrecorddef(sym.vardef).symtable.symlist.count-1 do
+          begin
+            subsym:=tsym(tabstractrecorddef(sym.vardef).symtable.symlist[i]);
+            if subsym.typ<>fieldvarsym then
+              continue;
+            if pos('$compose$',subsym.realname)=1 then
+              appendsym_compose_carrier(list,tfieldvarsym(subsym),offset)
+            else
+              appendsym_fieldvar_with_name_offset(list,tfieldvarsym(subsym),symname(subsym, false),tfieldvarsym(subsym).vardef,offset);
+          end;
       end;
 
 
