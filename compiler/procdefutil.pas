@@ -534,7 +534,7 @@ implementation
       argfields,
       spawnargsyms : tfplist;
       fEvent,fExc,fKeep,fRes,fSelf,fPv,fTid,fCancel,fDone : tfieldvarsym;
-      thunkpd,spawnpd,awaitpd : tprocdef;
+      runpd,thunkpd,spawnpd,awaitpd : tprocdef;
       implsym : tlocalvarsym;
       pparam : tparavarsym;
       spawnselfpara : tparavarsym;
@@ -743,15 +743,15 @@ implementation
       for i:=0 to argdefs.count-1 do
         argfields.add(add_field('__a'+tostr(i),tdef(argdefs[i])));
 
-      { ---- __Thunk: the TThreadFunc-compatible static thread entry. its address
-        is passed to BeginThread; being a static method of a module-level class
-        makes it a plain global code pointer that captures no frame ---- }
-      thunkpd:=new_method('__Thunk',ptrsinttype,true);
+      { ---- __Run: the work itself, a static method taking the impl as a
+        pointer. __Thunk calls it on the worker thread; __Spawn calls it on the
+        caller when the OS refuses a thread ---- }
+      runpd:=new_method('__Run',nil,true);
       pparam:=cparavarsym.create('p',10,vs_value,voidpointertype,[]);
-      thunkpd.parast.insertsym(pparam);
-      finish_method(thunkpd);
+      runpd.parast.insertsym(pparam);
+      finish_method(runpd);
       implsym:=clocalvarsym.create('__impl',vs_value,clsdef,[]);
-      thunkpd.localst.insertsym(implsym);
+      runpd.localst.insertsym(implsym);
       excloc:=nil;
 
       if isinline then
@@ -795,6 +795,18 @@ implementation
         cordconstnode.create(1,pasbool8type,false)));
       addstatement(stmt,rtl('RTLEVENTSETEVENT',ccallparanode.create(impl_field(fEvent),nil)));
       addstatement(stmt,cassignmentnode.create(impl_field(fKeep),cnilnode.create));
+      async_defer_method(runpd,body);
+
+      { ---- __Thunk: the TThreadFunc-compatible static thread entry. its address
+        is passed to BeginThread; being a static method of a module-level class
+        makes it a plain global code pointer that captures no frame ---- }
+      thunkpd:=new_method('__Thunk',ptrsinttype,true);
+      pparam:=cparavarsym.create('p',10,vs_value,voidpointertype,[]);
+      thunkpd.parast.insertsym(pparam);
+      finish_method(thunkpd);
+      body:=internalstatements(stmt);
+      addstatement(stmt,ccallnode.create(ccallparanode.create(cloadnode.create(pparam,pparam.owner),nil),
+        tprocsym(runpd.procsym),clsdef.symtable,cloadvmtaddrnode.create(ctypenode.create(clsdef)),[],nil));
       addstatement(stmt,cassignmentnode.create(cloadnode.create(thunkpd.funcretsym,thunkpd.funcretsym.owner),
         cordconstnode.create(0,ptrsinttype,false)));
       async_defer_method(thunkpd,body);
@@ -865,14 +877,28 @@ implementation
         end;
       addstatement(stmt,cassignmentnode.create(impl_field(fEvent),rtl('RTLEVENTCREATE',nil)));
       addstatement(stmt,cassignmentnode.create(impl_field(fKeep),cloadnode.create(implsym,implsym.owner)));
+      { hand the caller its reference before the thread exists: a worker that
+        finishes before __Spawn returns would otherwise drop the last reference
+        and free the future while __tid is still unset }
+      addstatement(stmt,cassignmentnode.create(
+        cloadnode.create(spawnpd.funcretsym,spawnpd.funcretsym.owner),cloadnode.create(implsym,implsym.owner)));
       addstatement(stmt,cassignmentnode.create(impl_field(fTid),rtl('BEGINTHREAD',
         ccallparanode.create(
           ctypeconvnode.create_internal(cloadnode.create(implsym,implsym.owner),voidpointertype),
           ccallparanode.create(
             ctypeconvnode.create_proc_to_procvar(cloadnode.create_procvar(thunkpd.procsym,thunkpd,thunkpd.procsym.owner)),
             nil)))));
-      addstatement(stmt,cassignmentnode.create(
-        cloadnode.create(spawnpd.funcretsym,spawnpd.funcretsym.owner),cloadnode.create(implsym,implsym.owner)));
+      { the OS refused a thread: do the work here, so the future still
+        completes, an exception still surfaces at the await, and the
+        keepalive reference still drops }
+      addstatement(stmt,cifnode.create(
+        caddnode.create(equaln,
+          impl_field(fTid),
+          ctypeconvnode.create_internal(cordconstnode.create(0,ptruinttype,false),fTid.vardef)),
+        ccallnode.create(
+          ccallparanode.create(ctypeconvnode.create_internal(cloadnode.create(implsym,implsym.owner),voidpointertype),nil),
+          tprocsym(runpd.procsym),clsdef.symtable,cloadvmtaddrnode.create(ctypenode.create(clsdef)),[],nil),
+        nil));
       async_defer_method(spawnpd,body);
 
       async_add_destructor(clsdef,fEvent,fExc,fTid);
@@ -919,7 +945,7 @@ implementation
       procnode : tnode;
       procreftype : tdef;
       fEvent,fExc,fKeep,fProc,fTid,fCancel,fDone : tfieldvarsym;
-      thunkpd,spawnpd,awaitpd : tprocdef;
+      runpd,thunkpd,spawnpd,awaitpd : tprocdef;
       implsym : tlocalvarsym;
       pparam,procparam : tparavarsym;
       excloc : tlocalvarsym;
@@ -1032,13 +1058,14 @@ implementation
       fCancel:=add_field('__cancel',pasbool8type);
       fDone:=add_field('__done',pasbool8type);
 
-      { ---- __Thunk: invoke the captured reference on the worker thread ---- }
-      thunkpd:=new_method('__Thunk',ptrsinttype,true);
+      { ---- __Run: invoke the captured reference, on the worker thread via
+        __Thunk or on the caller when the OS refuses a thread ---- }
+      runpd:=new_method('__Run',nil,true);
       pparam:=cparavarsym.create('p',10,vs_value,voidpointertype,[]);
-      thunkpd.parast.insertsym(pparam);
-      finish_method(thunkpd);
+      runpd.parast.insertsym(pparam);
+      finish_method(runpd);
       implsym:=clocalvarsym.create('__impl',vs_value,clsdef,[]);
-      thunkpd.localst.insertsym(implsym);
+      runpd.localst.insertsym(implsym);
       // the block reads the cancel flag through its `Cancelled` constref
       // parameter, so hand it the impl's field
       workcall:=ccallnode.create_procvar(
@@ -1058,6 +1085,18 @@ implementation
         cordconstnode.create(1,pasbool8type,false)));
       addstatement(stmt,rtl('RTLEVENTSETEVENT',ccallparanode.create(impl_field(fEvent),nil)));
       addstatement(stmt,cassignmentnode.create(impl_field(fKeep),cnilnode.create));
+      async_defer_method(runpd,body);
+
+      { ---- __Thunk: the TThreadFunc-compatible static thread entry. its address
+        is passed to BeginThread; being a static method of a module-level class
+        makes it a plain global code pointer that captures no frame ---- }
+      thunkpd:=new_method('__Thunk',ptrsinttype,true);
+      pparam:=cparavarsym.create('p',10,vs_value,voidpointertype,[]);
+      thunkpd.parast.insertsym(pparam);
+      finish_method(thunkpd);
+      body:=internalstatements(stmt);
+      addstatement(stmt,ccallnode.create(ccallparanode.create(cloadnode.create(pparam,pparam.owner),nil),
+        tprocsym(runpd.procsym),clsdef.symtable,cloadvmtaddrnode.create(ctypenode.create(clsdef)),[],nil));
       addstatement(stmt,cassignmentnode.create(cloadnode.create(thunkpd.funcretsym,thunkpd.funcretsym.owner),
         cordconstnode.create(0,ptrsinttype,false)));
       async_defer_method(thunkpd,body);
@@ -1095,14 +1134,28 @@ implementation
         cloadnode.create(procparam,procparam.owner)));
       addstatement(stmt,cassignmentnode.create(impl_field(fEvent),rtl('RTLEVENTCREATE',nil)));
       addstatement(stmt,cassignmentnode.create(impl_field(fKeep),cloadnode.create(implsym,implsym.owner)));
+      { hand the caller its reference before the thread exists: a worker that
+        finishes before __Spawn returns would otherwise drop the last reference
+        and free the future while __tid is still unset }
+      addstatement(stmt,cassignmentnode.create(
+        cloadnode.create(spawnpd.funcretsym,spawnpd.funcretsym.owner),cloadnode.create(implsym,implsym.owner)));
       addstatement(stmt,cassignmentnode.create(impl_field(fTid),rtl('BEGINTHREAD',
         ccallparanode.create(
           ctypeconvnode.create_internal(cloadnode.create(implsym,implsym.owner),voidpointertype),
           ccallparanode.create(
             ctypeconvnode.create_proc_to_procvar(cloadnode.create_procvar(thunkpd.procsym,thunkpd,thunkpd.procsym.owner)),
             nil)))));
-      addstatement(stmt,cassignmentnode.create(
-        cloadnode.create(spawnpd.funcretsym,spawnpd.funcretsym.owner),cloadnode.create(implsym,implsym.owner)));
+      { the OS refused a thread: do the work here, so the future still
+        completes, an exception still surfaces at the await, and the
+        keepalive reference still drops }
+      addstatement(stmt,cifnode.create(
+        caddnode.create(equaln,
+          impl_field(fTid),
+          ctypeconvnode.create_internal(cordconstnode.create(0,ptruinttype,false),fTid.vardef)),
+        ccallnode.create(
+          ccallparanode.create(ctypeconvnode.create_internal(cloadnode.create(implsym,implsym.owner),voidpointertype),nil),
+          tprocsym(runpd.procsym),clsdef.symtable,cloadvmtaddrnode.create(ctypenode.create(clsdef)),[],nil),
+        nil));
       async_defer_method(spawnpd,body);
 
       async_add_destructor(clsdef,fEvent,fExc,fTid);
