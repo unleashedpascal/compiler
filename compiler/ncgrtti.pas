@@ -806,15 +806,15 @@ implementation
         for i:=0 to st.SymList.Count-1 do
           begin
             sym:=tsym(st.SymList[i]);
-            if (
+            if ((
                  is_normal_fieldvarsym(sym) and
                  (
                   ((rt=fullrtti) and (sym.visibility<>vis_hidden)) or
                   ((rt=initrtti) and tfieldvarsym(sym).vardef.needs_inittable)
                  ) and
-                 not is_objc_class_or_protocol(tfieldvarsym(sym).vardef) and
-                 not compose_carrier(sym)
+                 not is_objc_class_or_protocol(tfieldvarsym(sym).vardef)
                ) or ((rt=fullrtti) and symref_to_field_hidden_path(sym))
+               ) and not compose_carrier(sym)
                 then
               begin
                 new(fe);
