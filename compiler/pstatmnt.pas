@@ -2217,9 +2217,9 @@ implementation
               parnthreads,parkvar,partids,parexc,parexctaken,parcancel,parchunk,parslot : tabstractnormalvarsym;
               tidtype,tidarrtype : tdef;
               excstat : tstatementnode;
-              workerbody : tnode;
+              workerbody,joinblock : tnode;
               old_procinfo : tprocinfo;
-              dispstat,innerstat,setupstat,parstat : tstatementnode;
+              dispstat,innerstat,setupstat,parstat,joinstat : tstatementnode;
             begin
               result:=nil;
               threadcount:=nil;
@@ -2717,10 +2717,31 @@ implementation
               { the caller runs the worker too }
               addstatement(parstat,ccallnode.create(nil,workerps,workerps.owner,nil,[],nil));
               { barrier: for k := 0 to nthreads-2 do
-                           if tids[k] <> 0 then WaitForThreadTerminate(tids[k], -1)
+                           if tids[k] <> 0 then
+                             begin
+                               WaitForThreadTerminate(tids[k], -1);
+                               CloseThread(tids[k]);
+                             end;
                 A zero handle is a spawn that failed - there is no thread to
                 join and the atomic counter drains its share through the
-                workers that did start (worst case the caller alone). }
+                workers that did start (worst case the caller alone).
+                WaitForThreadTerminate(tids[k], -1): the last call argument is
+                the outermost paranode. -1 is the timeout (an infinite wait):
+                the Windows backend hands it straight to WaitForSingleObject,
+                where 0 returns at once and leaves the workers running past the
+                barrier.
+                CloseThread releases the kernel handle BeginThread returned on
+                Windows (a no-op on pthreads, where the join already reclaimed
+                the thread); without it every loop leaks one handle per worker. }
+              joinblock:=internalstatements(joinstat);
+              addstatement(joinstat,ccallnode.createintern('WAITFORTHREADTERMINATE',
+                ccallparanode.create(
+                  cordconstnode.create(-1,s32inttype,false),
+                  ccallparanode.create(
+                    cvecnode.create(cloadnode.create(partids,partids.owner),cloadnode.create(parkvar,parkvar.owner)),nil))));
+              addstatement(joinstat,ccallnode.createintern('CLOSETHREAD',
+                ccallparanode.create(
+                  cvecnode.create(cloadnode.create(partids,partids.owner),cloadnode.create(parkvar,parkvar.owner)),nil)));
               addstatement(parstat,cfornode.create(cloadnode.create(parkvar,parkvar.owner),
                 cordconstnode.create(0,s32inttype,false),
                 caddnode.create(subn,cloadnode.create(parnthreads,parnthreads.owner),cordconstnode.create(2,s32inttype,false)),
@@ -2730,16 +2751,7 @@ implementation
                       cvecnode.create(cloadnode.create(partids,partids.owner),cloadnode.create(parkvar,parkvar.owner)),
                       ptruinttype),
                     cordconstnode.create(0,ptruinttype,false)),
-                  { WaitForThreadTerminate(tids[k], -1): the last call argument is
-                    the outermost paranode. -1 is the timeout (an infinite wait):
-                    the Windows backend hands it straight to WaitForSingleObject,
-                    where 0 returns at once and leaves the workers running past the
-                    barrier. }
-                  ccallnode.createintern('WAITFORTHREADTERMINATE',
-                    ccallparanode.create(
-                      cordconstnode.create(-1,s32inttype,false),
-                      ccallparanode.create(
-                        cvecnode.create(cloadnode.create(partids,partids.owner),cloadnode.create(parkvar,parkvar.owner)),nil))),
+                  joinblock,
                   nil),false));
               { re-raise the first captured worker exception, now on the caller }
               addstatement(parstat,cifnode.create(
