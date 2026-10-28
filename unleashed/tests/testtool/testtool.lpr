@@ -32,6 +32,7 @@ type
     CheckBinHas: TStringArray;
     CheckBinLacks: TStringArray;
     Cpu: TStringArray;
+    Os: TStringArray;
     Precompile: String;
     Touch: String;
     ExpectMsg: String;
@@ -198,6 +199,7 @@ begin
       'CHECKBIN_HAS':   Flags.CheckBinHas := value.Split([','], TStringSplitOptions.ExcludeEmpty);
       'CHECKBIN_LACKS': Flags.CheckBinLacks := value.Split([','], TStringSplitOptions.ExcludeEmpty);
       'CPU':        Flags.Cpu := value.Split([','], TStringSplitOptions.ExcludeEmpty);
+      'OS':         Flags.Os := value.Split([','], TStringSplitOptions.ExcludeEmpty);
       'PRECOMPILE': Flags.Precompile := value;
       'TOUCH':      Flags.Touch := value;
       'EXPECTMSG':  Flags.ExpectMsg := value;
@@ -592,6 +594,21 @@ begin
     end;
   end;
 
+  // %OS gate: the test only applies to the listed target operating systems
+  if Length(R.Flags.Os) > 0 then
+  begin
+    var osOk := false;
+    for var o in R.Flags.Os do
+      if SameText(o, GTargetOS) then osOk := true;
+    if not osOk then
+    begin
+      R.Verdict := vSkip;
+      R.Phase := 'skip';
+      R.Notes := 'target os ' + GTargetOS + ' not in %OS list';
+      Exit;
+    end;
+  end;
+
   var needsCmdLineMode: Boolean;
   var patched := PreparePatchedSource(SrcPath, needsCmdLineMode);
   var exePath := '';
@@ -963,6 +980,8 @@ begin
       head += ' (%CHECKBIN_LACKS=' + String.Join(',', r.Flags.CheckBinLacks) + ')';
     if Length(r.Flags.Cpu) > 0 then
       head += ' (%CPU=' + String.Join(',', r.Flags.Cpu) + ')';
+    if Length(r.Flags.Os) > 0 then
+      head += ' (%OS=' + String.Join(',', r.Flags.Os) + ')';
     testsLog.Add(head);
     if r.Verdict = vFail then
     begin
@@ -1110,6 +1129,8 @@ begin
   WriteLn('                   (when set, fpc gets `-Xs -XX -CX` for cleaner binary)');
   WriteLn('  %CPU=L           comma-separated cpu list (e.g. x86_64,aarch64); the');
   WriteLn('                   test is skipped when the target cpu is not listed');
+  WriteLn('  %OS=L            comma-separated os list (e.g. win32,win64); the test');
+  WriteLn('                   is skipped when the target os is not listed');
   WriteLn('  %EXPECTMSG=S     the compiler output must contain S (quote it when it');
   WriteLn('                   has spaces); checked for passing and %FAIL tests alike');
   WriteLn('  %PRECOMPILE=L    comma-separated helper units, each compiled in its own');
