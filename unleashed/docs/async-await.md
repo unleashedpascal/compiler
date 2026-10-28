@@ -103,7 +103,7 @@ Each nested `async begin` sees its own `Cancelled`. The call form runs an ordina
 
 ### `ThreadID` and the RTL thread API
 
-`ThreadID` returns the value `BeginThread()` handed back - exactly the currency of the RTL thread API: `ThreadSetPriority()`, `WaitForThreadTerminate(h.ThreadID, 100)`, and, if you accept the consequences, `KillThread()`.
+`ThreadID` returns the value `BeginThread()` handed back - exactly the currency of the RTL thread API: `ThreadSetPriority()` and, if you accept the consequences, `KillThread()`. Do not join it with `WaitForThreadTerminate()`: the worker ends through `EndThread()`, which detaches it on pthreads, and joining a detached thread is undefined. Wait with `await` or poll `Done`.
 
 `KillThread()` is a last resort. The thread dies without unwinding: no `finally` runs, allocations leak, a held lock (the heap manager's, say) can deadlock the process later. The future's machinery is not compensated either - a killed worker never signals completion, so `Done` stays false, a later `await` blocks forever, and the future object is never freed. Prefer `Cancel()` plus a polling worker.
 
@@ -188,7 +188,7 @@ Outside the modeswitch none of the keywords is recognized and existing code is u
 - **Everything the routine reaches runs on the worker** - including callbacks it invokes. A handler that must touch the GUI wraps that part in `sync`, or marshals manually with `TThread.Synchronize(nil, ...)` / `TThread.Queue(nil, ...)` (the `nil` because the worker is a plain `BeginThread()` thread with no `TThread` instance).
 - **Shared mutable state is your responsibility.** The call form snapshots arguments, but the block form captures by reference and a snapshotted `self` shares the object - synchronize concurrent access yourself ([`lock`](lock.md) pairs well).
 - **Fire-and-forget work may not finish.** At program exit outstanding fire-and-forget workers are not awaited. Keep and `await` the future when completion matters.
-- **Cleanup is automatic.** When the last reference to a future drops, a synthesized destructor releases the RTL event, the thread handle, and a still-unread exception. Built on `system`-unit primitives only (`BeginThread()`, `RTLEvent*`) - no RTL changes.
+- **Cleanup is automatic.** When the last reference to a future drops, a synthesized destructor releases the RTL event, the thread handle, and a still-unread exception. The worker thread ends through `EndThread()`, so its stack is reclaimed without anyone joining it. Built on `system`-unit primitives only (`BeginThread()`, `RTLEvent*`) - no RTL changes.
 
 ## Demo
 

@@ -799,7 +799,10 @@ implementation
 
       { ---- __Thunk: the TThreadFunc-compatible static thread entry. its address
         is passed to BeginThread; being a static method of a module-level class
-        makes it a plain global code pointer that captures no frame ---- }
+        makes it a plain global code pointer that captures no frame. it ends
+        through EndThread rather than returning: nobody joins a worker (await
+        waits on the event), and on pthreads an unjoined thread keeps its stack
+        mapped until the process exits. EndThread detaches it first ---- }
       thunkpd:=new_method('__Thunk',ptrsinttype,true);
       pparam:=cparavarsym.create('p',10,vs_value,voidpointertype,[]);
       thunkpd.parast.insertsym(pparam);
@@ -809,6 +812,7 @@ implementation
         tprocsym(runpd.procsym),clsdef.symtable,cloadvmtaddrnode.create(ctypenode.create(clsdef)),[],nil));
       addstatement(stmt,cassignmentnode.create(cloadnode.create(thunkpd.funcretsym,thunkpd.funcretsym.owner),
         cordconstnode.create(0,ptrsinttype,false)));
+      addstatement(stmt,rtl('ENDTHREAD',ccallparanode.create(cordconstnode.create(0,u32inttype,false),nil)));
       async_defer_method(thunkpd,body);
 
       { ---- __Await: the future interface method awaited on the caller ---- }
@@ -1089,7 +1093,10 @@ implementation
 
       { ---- __Thunk: the TThreadFunc-compatible static thread entry. its address
         is passed to BeginThread; being a static method of a module-level class
-        makes it a plain global code pointer that captures no frame ---- }
+        makes it a plain global code pointer that captures no frame. it ends
+        through EndThread rather than returning: nobody joins a worker (await
+        waits on the event), and on pthreads an unjoined thread keeps its stack
+        mapped until the process exits. EndThread detaches it first ---- }
       thunkpd:=new_method('__Thunk',ptrsinttype,true);
       pparam:=cparavarsym.create('p',10,vs_value,voidpointertype,[]);
       thunkpd.parast.insertsym(pparam);
@@ -1099,6 +1106,7 @@ implementation
         tprocsym(runpd.procsym),clsdef.symtable,cloadvmtaddrnode.create(ctypenode.create(clsdef)),[],nil));
       addstatement(stmt,cassignmentnode.create(cloadnode.create(thunkpd.funcretsym,thunkpd.funcretsym.owner),
         cordconstnode.create(0,ptrsinttype,false)));
+      addstatement(stmt,rtl('ENDTHREAD',ccallparanode.create(cordconstnode.create(0,u32inttype,false),nil)));
       async_defer_method(thunkpd,body);
 
       { ---- __Await: join, then re-raise any captured exception ---- }
