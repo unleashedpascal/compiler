@@ -3321,7 +3321,8 @@ implementation
             assigned(tstoreddef(def).genericdef) and
             assigned(def.typesym) then
           result:=make_mangledname('',tstoreddef(def).genericdef.owner,def.typesym.name)
-        else if def.typ in [recorddef,objectdef] then
+        else if (def.typ in [recorddef,objectdef]) and
+           not (df_unique in def.defoptions) then
           result:=make_mangledname('',tabstractrecorddef(def).symtable,'')
         else
           result:=make_mangledname('',def.owner,def.typesym.name);
