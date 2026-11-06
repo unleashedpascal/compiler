@@ -317,6 +317,9 @@ interface
           function read_interp_mask:ansistring;
           { pop interp_mode from stack, or set to im_none if no outer level }
           procedure exit_interp_level;
+          // read one `#nn` char constant (decimal, $hex, &octal, %binary)
+          // at c='#' and return its value, -1 after an error message
+          function read_interp_charconst:longint;
           function  readpreproc:ttoken;
           function  readpreprocint(var value:int64;const place:string):boolean;
           function  readpreprocset(conform_to:tsetdef;var value:tdynset;const place:string):boolean;
@@ -6679,6 +6682,63 @@ type
       end;
 
 
+    function tscannerfile.read_interp_charconst:longint;
+      var
+        asciinr : string[33];
+        code : integer;
+      begin
+        readchar; { read # }
+        case c of
+          '$':
+            begin
+              readchar;
+              asciinr:='$';
+              while (upcase(c) in ['A'..'F','0'..'9']) and (length(asciinr)<=7) do
+                begin
+                  asciinr:=asciinr+c;
+                  readchar;
+                end;
+            end;
+          '&':
+            begin
+              readchar;
+              asciinr:='&';
+              while (c in ['0'..'7']) and (length(asciinr)<=8) do
+                begin
+                  asciinr:=asciinr+c;
+                  readchar;
+                end;
+            end;
+          '%':
+            begin
+              readchar;
+              asciinr:='%';
+              while (c in ['0','1']) and (length(asciinr)<=22) do
+                begin
+                  asciinr:=asciinr+c;
+                  readchar;
+                end;
+            end;
+          else
+            begin
+              asciinr:='';
+              while (c in ['0'..'9']) and (length(asciinr)<=8) do
+                begin
+                  asciinr:=asciinr+c;
+                  readchar;
+                end;
+            end;
+        end;
+        val(asciinr,result,code);
+        // fragments are byte strings, so only single-byte values fit here
+        if (asciinr='') or (code<>0) or (result<0) or (result>255) then
+          begin
+            Message(scan_e_illegal_char_const);
+            result:=-1;
+          end;
+      end;
+
+
     procedure tscannerfile.exit_interp_level;
       var
         top : sizeint;
@@ -6707,7 +6767,7 @@ type
         firstdigitread: boolean;
         had_newline,first_multiline : boolean;
         trimcount : word;
-        interp_len : longint;
+        interp_len,m : longint;
        label
          exit_label;
       begin
@@ -6759,6 +6819,26 @@ type
                         cstringpattern[interp_len]:='''';
                         readchar;
                         continue;
+                      end;
+                    // `#nn` after the closing quote glues to the literal and a
+                    // quote after that reopens it, as in `'a'#10'b'`
+                    if c='#' then
+                      begin
+                        while c='#' do
+                          begin
+                            m:=read_interp_charconst;
+                            if m<0 then
+                              break;
+                            inc(interp_len);
+                            if interp_len>length(cstringpattern) then
+                              setlength(cstringpattern,length(cstringpattern)+256);
+                            cstringpattern[interp_len]:=chr(m);
+                          end;
+                        if c='''' then
+                          begin
+                            readchar;
+                            continue;
+                          end;
                       end;
                     if interp_len>0 then
                       begin
