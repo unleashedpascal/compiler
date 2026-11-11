@@ -204,7 +204,7 @@ Three CLI flags that override metadata the compiler embeds into the binary: `--f
 
 ### [Embed a file at compile time - `$embedstr` / `$embedbytes`](embed.md)
 
-`{$embedstr NAME 'path'}` emits `const NAME: String = '...';`, and `{$embedbytes NAME 'path'}` emits `const NAME: array[0..N-1] of byte = (...);`. The file is read as raw bytes at compile time, so the asset ships inside the binary with no runtime file I/O. Each directive has a 1-arg form emitting a bare value expression for inline use. Path resolution matches `{$I}`. Available in every mode, no modeswitch.
+`{$embedstr NAME 'path'}` emits `const NAME: String = '...';`, and `{$embedbytes NAME 'path'}` emits `const NAME: array[0..N-1] of byte = (...);`. The file is read as raw bytes at compile time, so the asset ships inside the binary with no runtime file I/O. Each directive has a 1-arg form emitting a bare value expression for inline use. Path resolution matches `{$I}`. Parameters after the path pack the file (`compress`: DEFLATE, zlib, gzip or Zstandard) and encrypt it (`encrypt`: ChaCha20 or AES-256, with a Poly1305 tag) before it is embedded. Available in every mode, no modeswitch.
 
 ---
 

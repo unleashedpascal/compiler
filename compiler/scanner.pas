@@ -378,6 +378,7 @@ implementation
       { This is needed for tcputype }
       cpuinfo,
       fmodule,fppu,
+      cembed,
       { this is needed for $I %CURRENTROUTINE%}
       procinfo;
 
@@ -3164,14 +3165,15 @@ type
          end;
       end;
 
-    { shared front-end for $embedstr / $embedbytes: parse `[NAME] 'path'`,
-      resolve the path like $I (absolute, current source dir, then includepath)
-      and read the file into `raw`. the path is always quoted; without a NAME
-      in front of it -> expr_only. returns false and emits a diagnostic on error. }
+    { shared front-end for $embedstr / $embedbytes: parse `[NAME] 'path' [parameters]`,
+      resolve the path like $I (absolute, current source dir, then includepath),
+      read the file into `raw` and pack / encrypt it as the parameters say.
+      the path is always quoted; without a NAME in front of it -> expr_only.
+      returns false and emits a diagnostic on error. }
     function read_embed_args(const dirname:string;out varname:string;
                              out expr_only:boolean;out raw:ansistring):boolean;
       var
-        args      : string;
+        args,err  : ansistring;
         pathspec  : TCmdStr;
         path,name : TCmdStr;
         foundfile : TCmdStr;
@@ -3184,7 +3186,7 @@ type
         expr_only := true;
         raw := '';
         current_scanner.skipspace;
-        args := TrimSpace(current_scanner.readcomment);
+        args := TrimSpace(current_scanner.readlongcomment);
         if args = '' then
           begin
             Comment(V_Error, dirname + ': missing arguments');
@@ -3229,6 +3231,11 @@ type
         close(f);
         if bytesread <> filebytes then
           SetLength(raw, bytesread);
+        if not embed_apply_params(args, raw, err) then
+          begin
+            Comment(V_Error, dirname + ': ' + err);
+            exit;
+          end;
         result := true;
       end;
 
