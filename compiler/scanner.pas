@@ -3166,14 +3166,12 @@ type
 
     { shared front-end for $embedstr / $embedbytes: parse `[NAME] 'path'`,
       resolve the path like $I (absolute, current source dir, then includepath)
-      and read the file into `raw`. one token -> expr_only (no varname),
-      two tokens -> NAME + path. returns false and emits a diagnostic on error. }
+      and read the file into `raw`. the path is always quoted; without a NAME
+      in front of it -> expr_only. returns false and emits a diagnostic on error. }
     function read_embed_args(const dirname:string;out varname:string;
                              out expr_only:boolean;out raw:ansistring):boolean;
       var
         args      : string;
-        token1    : string;
-        token2    : string;
         pathspec  : TCmdStr;
         path,name : TCmdStr;
         foundfile : TCmdStr;
@@ -3186,23 +3184,24 @@ type
         expr_only := true;
         raw := '';
         current_scanner.skipspace;
-        args := current_scanner.readcomment;
-        token1 := GetToken(args, ' ');
-        if token1 = '' then
+        args := TrimSpace(current_scanner.readcomment);
+        if args = '' then
           begin
             Comment(V_Error, dirname + ': missing arguments');
             exit;
           end;
-        token2 := GetToken(args, ' ');
-        if token2 = '' then
-          pathspec := TCmdStr(token1)
-        else
+        if not (args[1] in ['''','"']) then
           begin
             expr_only := false;
-            varname := token1;
-            pathspec := TCmdStr(token2);
+            varname := GetToken(args, ' ');
+            args := TrimSpace(args);
           end;
-        pathspec := FixFileName(pathspec);
+        if (args = '') or not (args[1] in ['''','"']) then
+          begin
+            Comment(V_Error, dirname + ': the path must be in quotes');
+            exit;
+          end;
+        pathspec := FixFileName(TCmdStr(GetToken(args, ' ')));
         path := ExtractFilePath(pathspec);
         name := ExtractFileName(pathspec);
         { `*.ext` names the current source file, like $R and $I }

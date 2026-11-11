@@ -11,7 +11,7 @@ The name `embed` (rather than `include`) is deliberate: `{$include}` / `{$i}` sp
 
 ## Two forms each
 
-Each directive has a 2-arg and a 1-arg form, chosen by token count: two tokens (`NAME 'path'`) emit a named constant, one token (`'path'`) emits a bare value expression.
+Each directive has a 2-arg and a 1-arg form: a name in front of the path (`NAME 'path'`) emits a named constant, the path alone (`'path'`) emits a bare value expression.
 
 ```pascal
 {$embedstr   NAME 'path'}   // const NAME: String = '...';
@@ -20,7 +20,7 @@ Each directive has a 2-arg and a 1-arg form, chosen by token count: two tokens (
 {$embedbytes 'path'}        // bare [$xx,$yy,...] array literal
 ```
 
-The path may be quoted with `'...'` or `"..."`, or left bare (no spaces inside). Path resolution matches `{$I}`:
+The path is always written in quotes, `'...'` or `"..."`, and may contain spaces. A path without quotes is an error. Path resolution matches `{$I}`:
 
 - an **absolute** path is used verbatim;
 - a **relative** path is searched in the current source file's directory, then the local includepath, then the global includepath;
@@ -113,9 +113,8 @@ Use `$embedstr` when the consumer wants text or a buffer to `move()` out of; `$e
 | Trigger | Diagnostic |
 |---|---|
 | `{$embedstr}` / `{$embedbytes}` with no arguments | `Error: embedstr: missing arguments` / `Error: embedbytes: missing arguments` |
+| Path without quotes, as in `{$embedstr foo.txt}` or `{$embedstr data foo.txt}` | `Error: embedstr: the path must be in quotes` / `Error: embedbytes: the path must be in quotes` |
 | File not found or not openable | `Fatal: Cannot open include file "<path>"` |
-
-A bare `{$embedstr foo}` is read as the 1-arg form looking for a file named `foo`; if no such file exists, the same fatal `Cannot open include file "foo"` fires.
 
 ## Demo
 
