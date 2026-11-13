@@ -16735,6 +16735,12 @@ unit aoptx86;
                   not SuperRegistersEqual(taicpu(p).oper[1]^.reg, taicpu(hp1).oper[1]^.reg) and
                   MemRegisterNotUsedLater
                 )
+              ) and (
+                { If the MOV has to be moved up to the ADD (see below), its
+                  destination must not be used in between }
+                not (cs_opt_level3 in current_settings.optimizerswitches) or
+                not RegModifiedBetween(taicpu(p).oper[0]^.reg, p, hp1) or
+                not RegUsedBetween(taicpu(hp1).oper[1]^.reg, p, hp1)
               ) then
                 begin
 
