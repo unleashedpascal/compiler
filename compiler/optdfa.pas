@@ -844,7 +844,11 @@ unit optdfa;
                           { typed consts are initialized, further, warn only once per location }
                           if not (vo_is_typed_const in varsym.varoptions) and not(WarnedForLocation(n.fileinfo)) then
                             begin
-                              UninitializedVariableMessage(n.fileinfo,true,varsym.typ=localvarsym,is_managed_type(varsym.vardef),varsym.realname);
+                              // a var parameter actual that outlived its call (expanded
+                              // fill or move) gets a hint, like in the callparan case
+                              UninitializedVariableMessage(n.fileinfo,
+                                not((nf_modify in n.flags) and (loadnf_only_uninitialized_hint in tloadnode(n).loadnodeflags)),
+                                varsym.typ=localvarsym,is_managed_type(varsym.vardef),varsym.realname);
                               AddFilepos(n.fileinfo);
                               result:=fen_norecurse_true;
                             end;

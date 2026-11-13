@@ -3277,6 +3277,16 @@ implementation
           result:=cderefnode.create(result);
         end;
 
+      // the destination was a var parameter actual: dfa reports it by a
+      // hint only when it is uninitialized, as it does for the call
+      procedure markvardest(n: tnode);
+        begin
+          while n.nodetype in [subscriptn,vecn,typeconvn] do
+            n:=tunarynode(n).left;
+          if n.nodetype=loadn then
+            include(tloadnode(n).loadnodeflags,loadnf_only_uninitialized_hint);
+        end;
+
       function chunkpattern(const patq: qword; w: longint): qword;
         begin
           case w of
@@ -3394,6 +3404,7 @@ implementation
                 else patq:=tordconstnode(stripped).value.uvalue;
               end;
           end;
+        markvardest(dstnode);
         buildchunks(total);
         newblock:=internalstatements(newstatement);
         dptr:=nil;
