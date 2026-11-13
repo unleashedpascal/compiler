@@ -593,8 +593,26 @@ implementation
         var
           OK : boolean;
           m : TModule;
+          hp : tppumodule;
+          isnew : boolean;
 
         begin
+          { a unit that still has to be compiled from source is taken like a
+            unit of the uses clause: the program waits for the scheduler and
+            connect_loaded_units adds it once it is done. AddUnit would call
+            finish_module, which allows no recompile }
+          hp:=registerunit(curr,s,'',isnew);
+          if isnew then
+            usedunits.concat(tused_unit.create(hp,true,true,nil));
+          hp.adddependency(curr,curr.in_interface);
+          hp.loadppu(curr);
+          if not (hp.state in [ms_compiled,ms_processed]) then
+            begin
+              curr.addusedunit(hp,true,cunitsym.create(hp.modulename^,nil));
+              tmodule.ctask_fast_backtrack:=true;
+              Result:=false;
+              exit;
+            end;
           m:=AddUnit(curr,s,true);
           OK:=assigned(m) and (m.state in [ms_compiled,ms_processed]);
           Result:=ok and Result;
