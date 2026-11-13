@@ -16635,6 +16635,27 @@ unit aoptx86;
             Result := not RegUsedAfterInstruction(taicpu(p).oper[1]^.reg, hp1, TmpUsedRegs);
           end;
 
+        { Returns True if an instruction between p and hp1 writes to memory.
+          A load at hp1 must then stay where it is, since the write might be
+          to the address it reads from }
+        function MemWrittenBetween: Boolean;
+          var
+            hp2: tai;
+            X: Integer;
+          begin
+            Result := False;
+            hp2 := p;
+            { Everything up to hp1 is an instruction, see GetNextInstructionUsingRegCount }
+            while GetNextInstruction(hp2, hp2) and (hp2 <> hp1) do
+              for X := 0 to taicpu(hp2).ops - 1 do
+                if (taicpu(hp2).oper[X]^.typ = top_ref) and
+                  InsChangeWritesOp(insprop[taicpu(hp2).opcode].Ch, X) then
+                  begin
+                    Result := True;
+                    Exit;
+                  end;
+          end;
+
       begin
         Result := False;
         DoAddMov2Lea:=false;
@@ -16737,10 +16758,14 @@ unit aoptx86;
                 )
               ) and (
                 { If the MOV has to be moved up to the ADD (see below), its
-                  destination must not be used in between }
+                  destination must not be used in between, and neither may
+                  memory be written to in between }
                 not (cs_opt_level3 in current_settings.optimizerswitches) or
                 not RegModifiedBetween(taicpu(p).oper[0]^.reg, p, hp1) or
-                not RegUsedBetween(taicpu(hp1).oper[1]^.reg, p, hp1)
+                (
+                  not RegUsedBetween(taicpu(hp1).oper[1]^.reg, p, hp1) and
+                  not MemWrittenBetween
+                )
               ) then
                 begin
 
