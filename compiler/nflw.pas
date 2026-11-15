@@ -2118,6 +2118,10 @@ implementation
         countermin, countermax: Tconstexprint;
         firsttemp : ttempcreatenode;
         firstcheck,breakcheck : tnode;
+        stepassign,distance : tnode;
+        laststep : tblocknode;
+        laststatements : tstatementnode;
+        distdef : torddef;
 
       procedure iterate_counter(var s : tstatementnode;fw : boolean);
         var
@@ -2161,6 +2165,7 @@ implementation
             steptemp := step;  totemp := to;  i := from;  first := true;
             while true do begin
               if first then first := false
+              else if to - i < step then begin i := i + step; break end
               else i := i + step;
               if i > to then break;     -- < to for backward
               body;                     -- continue here lands on the next pass
@@ -2188,21 +2193,45 @@ implementation
 
             addstatement(statements,cassignmentnode.create_internal(left.getcopy,right.getcopy));
 
-            { if first then first := false else i := i +/- step }
+            { if first then first := false
+              else if distance < step then begin i := i +/- step; break end
+              else i := i +/- step
+
+              distance is |to - i| taken unsigned in the counter's size, so the
+              loop stops before i +/- step can wrap around the counter's type }
             leftcopy:=left.getcopy;
             node_reset_flags(leftcopy,[nf_modify,nf_write],[tnf_pass1_done]);
             if lnf_backward in loopflags then
-              firstcheck:=cifnode.create(ctemprefnode.create(firsttemp),
-                cassignmentnode.create_internal(ctemprefnode.create(firsttemp),
-                  cordconstnode.create(0,pasbool1type,false)),
-                cassignmentnode.create_internal(left.getcopy,
-                  caddnode.create_internal(subn,leftcopy,ctemprefnode.create(steptemp))))
+              stepassign:=cassignmentnode.create_internal(left.getcopy,
+                caddnode.create_internal(subn,leftcopy,ctemprefnode.create(steptemp)))
             else
-              firstcheck:=cifnode.create(ctemprefnode.create(firsttemp),
-                cassignmentnode.create_internal(ctemprefnode.create(firsttemp),
-                  cordconstnode.create(0,pasbool1type,false)),
-                cassignmentnode.create_internal(left.getcopy,
-                  caddnode.create_internal(addn,leftcopy,ctemprefnode.create(steptemp))));
+              stepassign:=cassignmentnode.create_internal(left.getcopy,
+                caddnode.create_internal(addn,leftcopy,ctemprefnode.create(steptemp)));
+
+            distdef:=get_unsigned_inttype(left.resultdef);
+            leftcopy:=left.getcopy;
+            node_reset_flags(leftcopy,[nf_modify,nf_write],[tnf_pass1_done]);
+            if lnf_backward in loopflags then
+              distance:=caddnode.create_internal(subn,
+                ctypeconvnode.create_internal(leftcopy,distdef),
+                ctypeconvnode.create_internal(ctemprefnode.create(totemp),distdef))
+            else
+              distance:=caddnode.create_internal(subn,
+                ctypeconvnode.create_internal(ctemprefnode.create(totemp),distdef),
+                ctypeconvnode.create_internal(leftcopy,distdef));
+            distance:=ctypeconvnode.create_internal(distance,distdef);
+
+            laststep:=internalstatements(laststatements);
+            addstatement(laststatements,stepassign.getcopy);
+            addstatement(laststatements,cbreaknode.create);
+
+            firstcheck:=cifnode.create(ctemprefnode.create(firsttemp),
+              cassignmentnode.create_internal(ctemprefnode.create(firsttemp),
+                cordconstnode.create(0,pasbool1type,false)),
+              cifnode.create(
+                caddnode.create_internal(ltn,distance,
+                  ctypeconvnode.create_internal(ctemprefnode.create(steptemp),distdef)),
+                laststep,stepassign));
             addstatement(loopstatements,firstcheck);
 
             { if i > to (forward) or i < to (backward) then break }

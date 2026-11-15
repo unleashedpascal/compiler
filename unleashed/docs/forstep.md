@@ -58,11 +58,16 @@ A surviving step lowers the for-loop to a while-loop with the increment at the *
 steptemp := step;  totemp := to;  i := from;  first := true;
 while true do begin
   if first then first := false
-  else i := i + steptemp;          // - steptemp for downto
+  else if totemp - i < steptemp then begin
+    i := i + steptemp;             // - steptemp for downto
+    break;
+  end else i := i + steptemp;      // - steptemp for downto
   if i > totemp then break;        // < totemp for downto
   body;                            // continue lands on the next pass
 end;
 ```
+
+`totemp - i` (`i - totemp` for `downto`) is the distance left to the bound. It is computed as an unsigned number of the counter's size, so it is exact for every counter type and never wraps. The loop stops as soon as the next step would go past the bound, which also covers a bound at the very end of the counter's type: `for var b: byte := 0 to 255 step 55 do` visits 0, 55, 110, 165, 220 and stops.
 
 This shape lets every control-flow construct behave as in a regular for-loop:
 
@@ -89,6 +94,17 @@ for i := 1 to 10 step 4 do
 ```
 
 When the post-loop value matters, prefer `break` (exact), or derive the last body value as `i - step` (`i + step` for `downto`) after a natural exit.
+
+The first value past the bound may not fit in the counter's type. The counter then wraps around, while the loop itself still stops at the right place:
+
+```pascal
+var b: byte;
+
+for b := 0 to 250 step 50 do ; // body sees 0, 50, ..., 250
+{ b = 44 after the loop (250 + 50 = 300 wraps to 44) }
+```
+
+`i - step` still gives the last body value here, as long as it is computed in the counter's type (`byte(b - 50) = 250`).
 
 ## Type rules
 
@@ -119,6 +135,10 @@ With the modeswitch off (`{$modeswitch forstep-}`), `step` in a for-header is no
 | `for i := 1 to 5 step 100 do` | body runs once (`i = 1`), then `1 + 100 > 5` exits |
 | `for i := 10 to 1 step 2 do` | empty range, body never runs |
 | `for i := 5 to 5 step 3 do` | single iteration (`i = 5`) |
+| `for var b: byte := 0 to 250 step 50 do` | last step lands exactly on the bound: body sees 0, 50, ..., 250, then exits; `250 + 50` does not fit in a `byte`, the loop still stops |
+| `for var b: byte := 0 to 255 step 55 do` | bound is `High(byte)`: body sees 0, 55, 110, 165, 220, then exits |
+| `for var b: byte := 255 downto 0 step 50 do` | bound is `Low(byte)`: body sees 255, 205, ..., 5, then exits |
+| `for var i: int64 := Low(int64) to High(int64) step High(int64) do` | distance to the bound is wider than `High(int64)`: body sees `Low(int64)`, -1, `High(int64) - 1`, then exits |
 | step from a runtime variable holding `0` | the counter never advances - infinite loop; no compile-time check is possible, prefer constants |
 | nested for-step loops | each level keeps its own step and counter |
 
