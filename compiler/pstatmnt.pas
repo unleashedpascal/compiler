@@ -6417,7 +6417,7 @@ implementation
         begin
           result:=tlocalvarsym.create('$lock_'+prefix+'_'+suffix, vs_value, def, []);
           include(result.symoptions, sp_internal);
-          symtablestack.top.insertsym(result);
+          inline_decl_symtable.insertsym(result);
         end;
 
       var
@@ -6644,7 +6644,7 @@ implementation
                         block is already typechecked, so DFA must not flag
                         the loads in it }
                       addrtemp.varstate:=vs_initialised;
-                      symtablestack.top.insertsym(addrtemp);
+                      inline_decl_symtable.insertsym(addrtemp);
                       setlength(addr_inits, length(addr_inits)+1);
                       addr_inits[high(addr_inits)]:=cassignmentnode.create(
                         cloadnode.create(addrtemp, addrtemp.owner),
