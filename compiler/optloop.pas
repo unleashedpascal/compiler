@@ -1090,6 +1090,19 @@ unit optloop;
         changedforloop : boolean;
       end;
 
+    // true if the number of iterations, to-from+1, always fits in the counter's
+    // type; with a variable upper bound that only holds for a loop starting at 1
+    function forloop_count_fits(n: tfornode): boolean;
+      var
+        lo,hi,counts : Tconstexprint;
+      begin
+        if not is_constintnode(n.t1) then
+          exit(tordconstnode(n.right).value=1);
+        getrange(n.left.resultdef,lo,hi);
+        counts:=tordconstnode(n.t1).value-tordconstnode(n.right).value+1;
+        result:=(counts>=lo) and (counts<=hi);
+      end;
+
     function OptimizeForLoop_iterforloops(var n: tnode; arg: pointer): foreachnoderesult;
       begin
         Result:=fen_false;
@@ -1097,6 +1110,7 @@ unit optloop;
           not(lnf_backward in tfornode(n).loopflags) and
           (lnf_dont_mind_loopvar_on_exit in tfornode(n).loopflags) and
           is_constintnode(tfornode(n).right) and
+          forloop_count_fits(tfornode(n)) and
           (([cs_check_overflow,cs_check_range]*n.localswitches)=[]) and
           (([cs_check_overflow,cs_check_range]*tfornode(n).left.localswitches)=[]) and
           ((tfornode(n).left.nodetype=loadn) and (tloadnode(tfornode(n).left).symtableentry is tabstractvarsym) and
