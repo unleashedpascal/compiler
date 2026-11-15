@@ -120,6 +120,7 @@ unit optloop;
       var
         unrolls,i : cardinal;
         counts : qword;
+        distance : Tconstexprint;
         unrollstatement,newforstatement : tstatementnode;
         unrollblock : tblocknode;
         getridoffor : boolean;
@@ -149,6 +150,14 @@ unit optloop;
             { number of executions known? }
             if (tfornode(node).right.nodetype=ordconstn) and (tfornode(node).t1.nodetype=ordconstn) then
               begin
+                if lnf_backward in tfornode(node).loopflags then
+                  distance:=tordconstnode(tfornode(node).right).value-tordconstnode(tfornode(node).t1).value
+                else
+                  distance:=tordconstnode(tfornode(node).t1).value-tordconstnode(tfornode(node).right).value;
+                // the number of executions is distance+1, which must fit in counts
+                if distance>=high(qword) then
+                  exit;
+
                 if lnf_backward in tfornode(node).loopflags then
                   counts:=tordconstnode(tfornode(node).right).value-tordconstnode(tfornode(node).t1).value+1
                 else
