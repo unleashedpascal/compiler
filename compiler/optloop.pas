@@ -133,6 +133,9 @@ unit optloop;
           exit;
         if not(node.nodetype in [forn]) then
           exit;
+        // the unrolled copies count the counter up or down by one, a step loop does not
+        if assigned(tfornode(node).loopstep) then
+          exit;
         unrolls:=number_unrolls(tfornode(node).t2);
         if (unrolls>1) and
           ((tfornode(node).left.nodetype<>loadn) or
@@ -623,6 +626,9 @@ unit optloop;
       begin
         Result:=fen_false;
         if n.nodetype<>forn then
+          exit;
+        // induction variables advance by one per iteration, a step loop does not
+        if assigned(tfornode(n).loopstep) then
           exit;
         ctx^.containsnestedforloop:=false;
         ctx^.optimizeinductionvariablessingleforloop(n);
