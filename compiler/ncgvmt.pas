@@ -462,7 +462,8 @@ implementation
           begin
             pd:=tprocdef(Tprocsym(p).ProcdefList[i]);
             if (pd.procsym=tsym(p)) and
-               (pd.visibility=vis_published) then
+               (pd.visibility=vis_published) and
+               not pd.is_generic then
               inc(plongint(arg)^);
           end;
       end;
@@ -490,7 +491,8 @@ implementation
           begin
             pd:=tprocdef(Tprocsym(p).ProcdefList[i]);
             if (pd.procsym=tsym(p)) and
-               (pd.visibility=vis_published) then
+               (pd.visibility=vis_published) and
+               not pd.is_generic then
               begin
                 { l: name_of_method }
                 lists^.pubmethodstcb.start_internal_data_builder(current_asmdata.AsmLists[al_const],sec_rodata,_class.vmt_mangledname,datatcb,l);
