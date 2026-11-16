@@ -455,6 +455,44 @@ uses
         intffound : boolean;
         filepos : tfileposinfo;
         is_const : boolean;
+
+      function is_implementation_generic_parameter(def:tstoreddef):boolean;
+        var
+          currentpd,
+          declpd : tprocdef;
+          i,j : longint;
+          samenames : boolean;
+        begin
+          result:=false;
+          if parse_only or assigned(current_procinfo) or
+              not assigned(current_genericdef) or
+              (current_genericdef.typ<>procdef) then
+            exit;
+          currentpd:=tprocdef(current_genericdef);
+          if not currentpd.is_generic_param(def) or
+              not assigned(currentpd.genericparas) or
+              not assigned(currentpd.procsym) then
+            exit;
+          for i:=0 to tprocsym(currentpd.procsym).procdeflist.count-1 do
+            begin
+              declpd:=tprocdef(tprocsym(currentpd.procsym).procdeflist[i]);
+              if (declpd.procsym<>currentpd.procsym) or
+                  not declpd.forwarddef or not declpd.is_generic or
+                  not (declpd.interfacedef or assigned(declpd.struct)) or
+                  (declpd.genericparas.count<>currentpd.genericparas.count) then
+                continue;
+              samenames:=true;
+              for j:=0 to currentpd.genericparas.count-1 do
+                if tsym(declpd.genericparas[j]).name<>
+                    tsym(currentpd.genericparas[j]).name then
+                  begin
+                    samenames:=false;
+                    break;
+                  end;
+              if samenames then
+                exit(true);
+            end;
+        end;
       begin
         { check whether the given specialization parameters fit to the eventual
           constraints of the generic }
@@ -495,6 +533,15 @@ uses
             { test constraints for non-const params }
             if not genericdef.is_generic_param_const(i) then
               begin
+                { Constraints are only written on a routine declaration in
+                  Delphi-style syntax. While parsing its implementation header,
+                  the matching parameter is therefore still an undefineddef.
+                  The declaration has already validated the specialization and
+                  proc_add_definition will still require the complete headers
+                  to match. }
+                if (paradef.typ=undefineddef) and
+                    is_implementation_generic_parameter(paradef) then
+                  continue;
                 formaldef:=tstoreddef(ttypesym(genericdef.genericparas[i]).typedef);
                 if formaldef.typ=undefineddef then
                   { the parameter is of unspecified type, so no need to check }
